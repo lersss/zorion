@@ -1,12 +1,14 @@
+// internal/generator/planet/archetype.go
 package planet
 
 import (
 	"encoding/json"
+	"log"
 	"math/rand"
 	"os"
+	"path/filepath"
 )
 
-// Archetype — готовый набор черт планеты
 type Archetype struct {
 	ID              string
 	Name            string
@@ -24,7 +26,6 @@ type Archetype struct {
 	MassMax         float64
 }
 
-// ClimateConfig — структура из JSON
 type ClimateConfig struct {
 	ID                  string            `json:"id"`
 	Name                string            `json:"name"`
@@ -45,31 +46,36 @@ type ArchetypeConfig struct {
 
 var archetypeCache *ArchetypeConfig
 
-// LoadArchetypes загружает конфиг из JSON
 func LoadArchetypes(path string) error {
-    // Получаем абсолютный путь
-    absPath, err := filepath.Abs(path)
-    if err != nil {
-        log.Printf("⚠️ Ошибка получения абсолютного пути: %v", err)
-        absPath = path
-    }
-    log.Printf("🔍 Загрузка архетипов из: %s", absPath)
+	// Получаем абсолютный путь
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		log.Printf("⚠️ Ошибка получения абсолютного пути: %v", err)
+		absPath = path
+	}
+	log.Printf("🔍 Загрузка архетипов из: %s", absPath)
 
-    data, err := os.ReadFile(absPath)
-    if err != nil {
-        // Если не нашли, пробуем искать относительно текущей директории
-        cwd, _ := os.Getwd()
-        log.Printf("⚠️ Текущая директория: %s", cwd)
-        return err
-    }
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		// Если не нашли, пробуем искать относительно текущей директории
+		cwd, _ := os.Getwd()
+		log.Printf("⚠️ Текущая директория: %s", cwd)
+		return err
+	}
+	var cfg ArchetypeConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		log.Printf("⚠️ Ошибка парсинга JSON: %v", err)
+		return err
+	}
+	archetypeCache = &cfg
+	return nil
+}
 
-// GenerateArchetype создаёт архетип на основе спектрального класса
 func GenerateArchetype(spectralClass string, rng *rand.Rand) *Archetype {
 	if archetypeCache == nil {
 		return fallbackArchetype()
 	}
 
-	// 1. Выбираем климат с учётом весов
 	var selectedClimate *ClimateConfig
 	totalWeight := 0.0
 	for _, c := range archetypeCache.Climates {
@@ -95,7 +101,6 @@ func GenerateArchetype(spectralClass string, rng *rand.Rand) *Archetype {
 		}
 	}
 
-	// 2. Выбираем черты из разрешённых списков
 	surface := selectedClimate.AllowedSurfaces[rng.Intn(len(selectedClimate.AllowedSurfaces))]
 	hydro := selectedClimate.AllowedHydrospheres[rng.Intn(len(selectedClimate.AllowedHydrospheres))]
 	atmo := selectedClimate.AllowedAtmospheres[rng.Intn(len(selectedClimate.AllowedAtmospheres))]
