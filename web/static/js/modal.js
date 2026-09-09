@@ -1,6 +1,31 @@
 // web/static/js/modal.js
 
-// --- Состояние модалки (зум, панорамирование, hover) ---
+// --- Импорт генератора планет ---
+import PlanetGenerator from './planet-generator.js';
+import climateData from './climates.json' assert { type: 'json' };
+
+// --- Инициализация генератора ---
+const planetGen = new PlanetGenerator({
+    canvasSize: 64,          // размер текстуры планеты
+    maxCacheSize: 5000,
+    climateData: climateData
+});
+
+// --- Кеш для текстур (чтобы не генерировать повторно) ---
+const textureCache = new Map();
+
+// --- Хеш-функция для строки -> число (детерминированно) ---
+function hashStringToNumber(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash |= 0; // Convert to 32bit integer
+    }
+    return Math.abs(hash);
+}
+
+// --- Состояние модалки ---
 let modalState = {
     zoom: 1,
     offsetX: 0,
@@ -10,9 +35,26 @@ let modalState = {
     dragStartY: 0,
     dragStartOffsetX: 0,
     dragStartOffsetY: 0,
-    hoveredObject: null // 'star' или { type: 'planet', index: idx }
+    hoveredObject: null
 };
 
+// --- Функция определения климата на основе данных планеты ---
+function getClimateId(planet) {
+    const type = (planet.type || '').toLowerCase();
+    const temp = planet.temperature || 0;
+    const water = planet.water_percent || 0;
+
+    if (type.includes('вулканическая') || type.includes('лавовая')) return 'extreme';
+    if (type.includes('пустынная') && temp > 300) return 'hot';
+    if (type.includes('ледяная') || temp < 200) return 'cold';
+    if (type.includes('океаническая') || water > 60) return 'temperate';
+    if (temp > 350) return 'hot';
+    if (temp > 200) return 'temperate';
+    if (temp > 100) return 'cold';
+    return 'variable';
+}
+
+// --- Открытие модалки ---
 function openSystemModal(worldId, worldName, spectralClass) {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -235,11 +277,14 @@ function renderModal(worldName, spectralClass, planets) {
     modalState.canvasWrapper = canvasWrapper;
     modalState.spectralClass = spectralClass;
 
+    // Очищаем кеш текстур при открытии новой модалки, чтобы не было конфликтов
+    textureCache.clear();
+
     requestAnimationFrame(() => {
         drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
     });
 
-    // --- HOVER В МОДАЛКЕ ---
+    // --- Обработчики событий (остаются без изменений) ---
     canvas.addEventListener('mousemove', (e) => {
         const rectCanvas = canvas.getBoundingClientRect();
         const mouseX = (e.clientX - rectCanvas.left) * (canvas.width / rectCanvas.width);
@@ -374,6 +419,7 @@ function renderModal(worldName, spectralClass, planets) {
     resizeObserver.observe(canvasWrapper);
 }
 
+// --- Отрисовка системы с использованием генератора текстур и seed ---
 function drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height) {
     const dpr = window.devicePixelRatio || 1;
 
@@ -437,7 +483,7 @@ function drawSystem(canvas, spectralClass, planets, starRadius, starColor, width
     ctx.fill();
     ctx.restore();
 
-    // ---- СЛОЙ 3: ПЛАНЕТЫ ----
+    // ---- СЛОЙ 3: ПЛАНЕТЫ (с генерацией текстур) ----
     if (planets && planets.length > 0) {
         const planetData = [];
         planets.forEach((p, idx) => {
@@ -447,42 +493,59 @@ function drawSystem(canvas, spectralClass, planets, starRadius, starColor, width
             const px = cx + orbitRadius * Math.cos(angle);
             const py = cy + orbitRadius * Math.sin(angle);
 
-            let color = '#aaa';
-            let radius = 10 * sizeMultiplier;
-            const type = (p.type || '').toLowerCase();
-            if (type.includes('газовый') || type === 'gas_giant') {
-                color = '#e8a87c';
-                radius = 22 * sizeMultiplier + Math.random() * 4;
-            } else if (type.includes('землеподобная') || type === 'terran' || type === 'earthlike') {
-                color = '#6fcf97';
-                radius = 12 * sizeMultiplier + Math.random() * 4;
-            } else if (type.includes('пустынная') || type === 'desert') {
-                color = '#d4a373';
-                radius = 10 * sizeMultiplier + Math.random() * 3;
-            } else if (type.includes('ледяная') || type === 'ice') {
-                color = '#a8d8ea';
-                radius = 10 * sizeMultiplier + Math.random() * 3;
-            } else if (type.includes('вулканическая') || type === 'volcanic') {
-                color = '#e74c3c';
-                radius = 10 * sizeMultiplier + Math.random() * 3;
-            } else if (type.includes('океаническая') || type === 'ocean') {
-                color = '#3498db';
-                radius = 12 * sizeMultiplier + Math.random() * 3;
-            } else {
-                color = '#aaa';
-                radius = 8 * sizeMultiplier + Math.random() * 3;
+            // ---- Генерация текстуры планеты с seed на основе ID ----
+            const textureKey = `planet_${p.id || idx}_${spectralClass}`;
+            let texture = textureCache.get(textureKey);
+            if (!texture) {
+                const climateId = getClimateId(p);
+                const textureRadius = Math.min(30, 15 + (p.size || 10) * 1.2);
+                // Используем p.id как seed
+                const seed = p.id ? hashStringToNumber(p.id) : (Date.now() + idx);
+                try {
+                    const result = planetGen.generate({
+                        radius: textureRadius,
+                        starType: spectralClass,
+                        climateId: climateId,
+                        seed: seed  // <-- детерминизм!
+                    });
+                    texture = result.image;
+                    textureCache.set(textureKey, texture);
+                } catch (e) {
+                    console.warn('Planet texture generation failed:', e);
+                    texture = null;
+                }
             }
 
-            ctx.save();
-            ctx.shadowColor = color;
-            ctx.shadowBlur = 15;
-            ctx.beginPath();
-            ctx.arc(px, py, radius, 0, 2 * Math.PI);
-            ctx.fillStyle = color;
-            ctx.fill();
-            ctx.restore();
+            // ---- Рисуем текстуру или запасной круг ----
+            if (texture) {
+                const drawRadius = (10 + (p.size || 10) * 0.6) * sizeMultiplier;
+                ctx.save();
+                ctx.shadowColor = 'rgba(255,255,255,0.1)';
+                ctx.shadowBlur = 8;
+                ctx.drawImage(texture, px - drawRadius, py - drawRadius, drawRadius * 2, drawRadius * 2);
+                ctx.restore();
+            } else {
+                // Запасной вариант: цветной круг
+                let color = '#aaa';
+                const type = (p.type || '').toLowerCase();
+                if (type.includes('газовый') || type === 'gas_giant') color = '#e8a87c';
+                else if (type.includes('землеподобная') || type === 'terran') color = '#6fcf97';
+                else if (type.includes('пустынная') || type === 'desert') color = '#d4a373';
+                else if (type.includes('ледяная') || type === 'ice') color = '#a8d8ea';
+                else if (type.includes('вулканическая') || type === 'volcanic') color = '#e74c3c';
+                else if (type.includes('океаническая') || type === 'ocean') color = '#3498db';
+                const drawRadius = (10 + (p.size || 10) * 0.6) * sizeMultiplier;
+                ctx.save();
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(px, py, drawRadius, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.restore();
+            }
 
-            planetData.push({ x: px, y: py, radius, color, idx });
+            planetData.push({ x: px, y: py, radius: (10 + (p.size || 10) * 0.6) * sizeMultiplier, color: '#aaa', idx });
         });
 
         // ---- СЛОЙ 4: ПОДСВЕТКА (hover) ----
@@ -528,14 +591,12 @@ function drawSystem(canvas, spectralClass, planets, starRadius, starColor, width
     drawMiniMap(ctx, cx, cy, maxRadius, finalStarRadius, planets, width, height);
 }
 
-// --- ИСПРАВЛЕННАЯ МИНИ-КАРТА (step определён) ---
+// --- МИНИ-КАРТА (без изменений) ---
 function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height) {
-    console.log('drawMiniMap called');
     const miniSize = 120;
     const miniX = width - miniSize - 20;
     const miniY = height - miniSize - 20;
 
-    // Фон
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.strokeStyle = '#444';
@@ -546,7 +607,6 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
     ctx.stroke();
     ctx.restore();
 
-    // Вычисляем systemRadius и miniScale
     let systemRadius = starRadius * 1.8;
     if (planets && planets.length > 0) {
         const maxOrbitIndex = planets.reduce((max, p) => Math.max(max, p.orbit_index), 0);
@@ -555,16 +615,12 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
         const maxOrbitRadius = starRadius * 1.8 + (maxOrbitIndex + 1) * step * 1.1;
         systemRadius = Math.max(systemRadius, maxOrbitRadius);
     }
-    console.log('systemRadius:', systemRadius);
 
     const padding = 0.9;
     const miniScale = (miniSize * padding) / (systemRadius * 2);
-    console.log('miniScale:', miniScale);
-
     const centerX = miniX + miniSize / 2;
     const centerY = miniY + miniSize / 2;
 
-    // Рисуем звезду
     ctx.save();
     ctx.beginPath();
     ctx.arc(centerX, centerY, Math.max(2, starRadius * miniScale), 0, 2 * Math.PI);
@@ -572,19 +628,16 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
     ctx.fill();
     ctx.restore();
 
-    // Рисуем планеты
     if (planets && planets.length > 0) {
         const maxOrbitIndex = planets.reduce((max, p) => Math.max(max, p.orbit_index), 0);
         const availableRadius = maxRadius - starRadius * 1.8;
         const step = (maxOrbitIndex > 0) ? (availableRadius / (maxOrbitIndex + 1)) : availableRadius / 3;
-
         planets.forEach((p, idx) => {
             const randomOffset = (idx * 1.7) % 0.2 - 0.1;
             const orbitRadius = starRadius * 1.8 + (p.orbit_index + 1) * step * (1 + randomOffset);
             const angle = (idx * 1.3 + 0.7) % (2 * Math.PI);
             const px = centerX + orbitRadius * Math.cos(angle) * miniScale;
             const py = centerY + orbitRadius * Math.sin(angle) * miniScale;
-            console.log('Planet', idx, 'px:', px, 'py:', py);
             ctx.save();
             ctx.beginPath();
             ctx.arc(px, py, Math.max(1.5, 3 * miniScale), 0, 2 * Math.PI);
@@ -594,7 +647,6 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
         });
     }
 
-    // Рамка видимой области
     const viewScale = miniScale;
     const viewWidth = (width / modalState.zoom) * viewScale;
     const viewHeight = (height / modalState.zoom) * viewScale;
@@ -602,7 +654,6 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
     const viewCenterY = centerY - (modalState.offsetY / modalState.zoom) * viewScale;
     const viewX = viewCenterX - viewWidth / 2;
     const viewY = viewCenterY - viewHeight / 2;
-    console.log('viewX:', viewX, 'viewY:', viewY, 'viewWidth:', viewWidth, 'viewHeight:', viewHeight);
 
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';

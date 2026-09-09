@@ -1,0 +1,26 @@
+import PlanetGenerator from './planet-generator.js';
+import climateData from './climates.json' assert { type: 'json' };
+
+const generator = new PlanetGenerator({
+    canvasSize: 64,
+    maxCacheSize: 5000,
+    climateData: climateData
+});
+
+// Генерация планеты с климатом 'hot' (звезда типа G)
+const planet = generator.generate({
+    radius: 40,
+    starType: 'G',
+    climateId: 'hot'   // если не указать, будет выбран случайный на основе starType
+});
+
+// Все характеристики доступны в planet.meta
+console.log(planet.meta.climate.name);        // "Жаркий"
+console.log(planet.meta.surface);             // например, "пустынная"
+console.log(planet.meta.hydrosphere);         // "океаны"
+console.log(planet.meta.atmosphere);          // "плотная"
+console.log(planet.meta.biosphere);           // "микробная"
+console.log(planet.meta.temperature);         // число
+
+// Отрисовка
+ctx.drawImage(planet.image, x, y, 40, 40);
