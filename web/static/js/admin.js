@@ -85,7 +85,17 @@ export function renderPlanetStats(stats, container) {
     html += `<div class="stat-card"><strong>Среднее население:</strong> ${stats.avg_population.toLocaleString()}</div>`;
     html += `</div>`;
 
-    // Типы планет (поверхности)
+    // Геймдизайнерские типы
+    html += `<h3 style="margin-top:20px;">Геймдизайнерские типы планет</h3>`;
+    html += `<table class="stats-table" id="gd-table">
+        <thead><tr>
+            <th class="sortable" data-sort="gdtype" data-order="asc">Тип</th>
+            <th class="sortable" data-sort="gdcount" data-order="asc">Кол-во</th>
+        </tr></thead>
+        <tbody id="gd-body"></tbody>
+    </table>`;
+
+    // Типы поверхностей
     html += `<h3 style="margin-top:20px;">Распределение по типам поверхностей</h3>`;
     html += `<table class="stats-table" id="type-table">
         <thead><tr>
@@ -95,14 +105,34 @@ export function renderPlanetStats(stats, container) {
         <tbody id="type-body"></tbody>
     </table>`;
 
-    // Геймдизайнерские типы (новая таблица)
-    html += `<h3 style="margin-top:20px;">Геймдизайнерские типы планет</h3>`;
-    html += `<table class="stats-table" id="gd-table">
+    // Гидросферы
+    html += `<h3 style="margin-top:20px;">Гидросферы</h3>`;
+    html += `<table class="stats-table" id="hydro-table">
         <thead><tr>
-            <th class="sortable" data-sort="gdtype" data-order="asc">Тип</th>
-            <th class="sortable" data-sort="gdcount" data-order="asc">Кол-во</th>
+            <th class="sortable" data-sort="hydro" data-order="asc">Тип</th>
+            <th class="sortable" data-sort="hydrocount" data-order="asc">Кол-во</th>
         </tr></thead>
-        <tbody id="gd-body"></tbody>
+        <tbody id="hydro-body"></tbody>
+    </table>`;
+
+    // Атмосферы
+    html += `<h3 style="margin-top:20px;">Атмосферы</h3>`;
+    html += `<table class="stats-table" id="atmo-table">
+        <thead><tr>
+            <th class="sortable" data-sort="atmo" data-order="asc">Тип</th>
+            <th class="sortable" data-sort="atmocount" data-order="asc">Кол-во</th>
+        </tr></thead>
+        <tbody id="atmo-body"></tbody>
+    </table>`;
+
+    // Биосферы
+    html += `<h3 style="margin-top:20px;">Биосферы</h3>`;
+    html += `<table class="stats-table" id="bio-table">
+        <thead><tr>
+            <th class="sortable" data-sort="bio" data-order="asc">Тип</th>
+            <th class="sortable" data-sort="biocount" data-order="asc">Кол-во</th>
+        </tr></thead>
+        <tbody id="bio-body"></tbody>
     </table>`;
 
     // По спектральным классам
@@ -133,21 +163,39 @@ export function renderPlanetStats(stats, container) {
 
     // --- Заполнение таблиц ---
 
-    // 1. Типы поверхностей
-    const typeBody = document.getElementById('type-body');
-    let typeData = Object.entries(stats.planets_by_type).map(([type, count]) => ({ type, count }));
-    typeData.sort((a, b) => b.count - a.count);
-    typeBody.innerHTML = typeData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
-
-    // 2. Геймдизайнерские типы
+    // Геймдизайнерские типы
     const gdBody = document.getElementById('gd-body');
     let gdData = Object.entries(stats.game_design_types || {}).map(([type, count]) => ({ type, count }));
     gdData.sort((a, b) => b.count - a.count);
     gdBody.innerHTML = gdData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
 
-    // 3. Спектральные классы
+    // Типы поверхностей
+    const typeBody = document.getElementById('type-body');
+    let typeData = Object.entries(stats.planets_by_type || {}).map(([type, count]) => ({ type, count }));
+    typeData.sort((a, b) => b.count - a.count);
+    typeBody.innerHTML = typeData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
+
+    // Гидросферы
+    const hydroBody = document.getElementById('hydro-body');
+    let hydroData = Object.entries(stats.hydrosphere_count || {}).map(([type, count]) => ({ type, count }));
+    hydroData.sort((a, b) => b.count - a.count);
+    hydroBody.innerHTML = hydroData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
+
+    // Атмосферы
+    const atmoBody = document.getElementById('atmo-body');
+    let atmoData = Object.entries(stats.atmosphere_count || {}).map(([type, count]) => ({ type, count }));
+    atmoData.sort((a, b) => b.count - a.count);
+    atmoBody.innerHTML = atmoData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
+
+    // Биосферы
+    const bioBody = document.getElementById('bio-body');
+    let bioData = Object.entries(stats.biosphere_count || {}).map(([type, count]) => ({ type, count }));
+    bioData.sort((a, b) => b.count - a.count);
+    bioBody.innerHTML = bioData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
+
+    // Спектральные классы
     const spectralBody = document.getElementById('spectral-body');
-    let spectralData = Object.entries(stats.planets_by_spectral).map(([spec, types]) => {
+    let spectralData = Object.entries(stats.planets_by_spectral || {}).map(([spec, types]) => {
         const total = Object.values(types).reduce((sum, v) => sum + v, 0);
         const typesStr = Object.entries(types).map(([t, c]) => `${t}: ${c}`).join(', ');
         return { spec, typesStr, total };
@@ -155,106 +203,55 @@ export function renderPlanetStats(stats, container) {
     spectralData.sort((a, b) => b.total - a.total);
     spectralBody.innerHTML = spectralData.map(d => `<tr><td>${d.spec}</td><td>${d.typesStr}</td><td>${d.total}</td></tr>`).join('');
 
-    // --- Обработчики сортировки ---
+    // --- Обработчики сортировки (для всех таблиц) ---
 
-    // Для таблицы поверхностей
-    document.querySelectorAll('#type-table .sortable').forEach(th => {
-        th.addEventListener('click', function() {
-            const sortKey = this.dataset.sort;
-            const currentOrder = this.dataset.order;
-            const newOrder = currentOrder === 'asc' ? 'desc' : 'asc';
-            this.dataset.order = newOrder;
-            const tbody = document.getElementById('type-body');
-            const rows = Array.from(tbody.querySelectorAll('tr'));
-            rows.sort((a, b) => {
-                let valA, valB;
-                if (sortKey === 'type') {
-                    valA = a.cells[0].textContent;
-                    valB = b.cells[0].textContent;
-                } else {
-                    valA = parseInt(a.cells[1].textContent);
-                    valB = parseInt(b.cells[1].textContent);
-                }
-                if (typeof valA === 'string') {
-                    return newOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-                } else {
-                    return newOrder === 'asc' ? valA - valB : valB - valA;
-                }
+    // Универсальная функция для добавления сортировки
+    function addSorting(tableId, bodyId, sortKeyMap) {
+        const table = document.getElementById(tableId);
+        if (!table) return;
+        const headers = table.querySelectorAll('.sortable');
+        headers.forEach(th => {
+            th.addEventListener('click', function() {
+                const sortKey = this.dataset.sort;
+                const currentOrder = this.dataset.order;
+                const newOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+                this.dataset.order = newOrder;
+                const tbody = document.getElementById(bodyId);
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.sort((a, b) => {
+                    let valA, valB;
+                    if (sortKeyMap[sortKey]) {
+                        const key = sortKeyMap[sortKey];
+                        valA = key === 'text' ? a.cells[0].textContent : parseInt(a.cells[1].textContent);
+                        valB = key === 'text' ? b.cells[0].textContent : parseInt(b.cells[1].textContent);
+                    } else {
+                        // fallback: по первой колонке как текст
+                        valA = a.cells[0].textContent;
+                        valB = b.cells[0].textContent;
+                    }
+                    if (typeof valA === 'string') {
+                        return newOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                    } else {
+                        return newOrder === 'asc' ? valA - valB : valB - valA;
+                    }
+                });
+                rows.forEach(row => tbody.appendChild(row));
+                // Убираем стрелки у всех заголовков
+                table.querySelectorAll('.sortable').forEach(th => {
+                    th.textContent = th.textContent.replace(/ [▲▼]/, '');
+                });
+                this.textContent += newOrder === 'asc' ? ' ▲' : ' ▼';
             });
-            rows.forEach(row => tbody.appendChild(row));
-            document.querySelectorAll('#type-table .sortable').forEach(th => {
-                th.textContent = th.textContent.replace(/ [▲▼]/, '');
-            });
-            this.textContent += newOrder === 'asc' ? ' ▲' : ' ▼';
         });
-    });
+    }
 
-    // Для геймдизайнерских типов
-    document.querySelectorAll('#gd-table .sortable').forEach(th => {
-        th.addEventListener('click', function() {
-            const sortKey = this.dataset.sort;
-            const currentOrder = this.dataset.order;
-            const newOrder = currentOrder === 'asc' ? 'desc' : 'asc';
-            this.dataset.order = newOrder;
-            const tbody = document.getElementById('gd-body');
-            const rows = Array.from(tbody.querySelectorAll('tr'));
-            rows.sort((a, b) => {
-                let valA, valB;
-                if (sortKey === 'gdtype') {
-                    valA = a.cells[0].textContent;
-                    valB = b.cells[0].textContent;
-                } else {
-                    valA = parseInt(a.cells[1].textContent);
-                    valB = parseInt(b.cells[1].textContent);
-                }
-                if (typeof valA === 'string') {
-                    return newOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-                } else {
-                    return newOrder === 'asc' ? valA - valB : valB - valA;
-                }
-            });
-            rows.forEach(row => tbody.appendChild(row));
-            document.querySelectorAll('#gd-table .sortable').forEach(th => {
-                th.textContent = th.textContent.replace(/ [▲▼]/, '');
-            });
-            this.textContent += newOrder === 'asc' ? ' ▲' : ' ▼';
-        });
-    });
-
-    // Для спектральной таблицы
-    document.querySelectorAll('#spectral-table .sortable').forEach(th => {
-        th.addEventListener('click', function() {
-            const sortKey = this.dataset.sort;
-            const currentOrder = this.dataset.order;
-            const newOrder = currentOrder === 'asc' ? 'desc' : 'asc';
-            this.dataset.order = newOrder;
-            const tbody = document.getElementById('spectral-body');
-            const rows = Array.from(tbody.querySelectorAll('tr'));
-            rows.sort((a, b) => {
-                let valA, valB;
-                if (sortKey === 'spectral') {
-                    valA = a.cells[0].textContent;
-                    valB = b.cells[0].textContent;
-                } else if (sortKey === 'total') {
-                    valA = parseInt(a.cells[2].textContent);
-                    valB = parseInt(b.cells[2].textContent);
-                } else {
-                    valA = parseInt(a.cells[2].textContent);
-                    valB = parseInt(b.cells[2].textContent);
-                }
-                if (typeof valA === 'string') {
-                    return newOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-                } else {
-                    return newOrder === 'asc' ? valA - valB : valB - valA;
-                }
-            });
-            rows.forEach(row => tbody.appendChild(row));
-            document.querySelectorAll('#spectral-table .sortable').forEach(th => {
-                th.textContent = th.textContent.replace(/ [▲▼]/, '');
-            });
-            this.textContent += newOrder === 'asc' ? ' ▲' : ' ▼';
-        });
-    });
+    // Применяем сортировку для каждой таблицы
+    addSorting('gd-table', 'gd-body', { gdtype: 'text', gdcount: 'number' });
+    addSorting('type-table', 'type-body', { type: 'text', count: 'number' });
+    addSorting('hydro-table', 'hydro-body', { hydro: 'text', hydrocount: 'number' });
+    addSorting('atmo-table', 'atmo-body', { atmo: 'text', atmocount: 'number' });
+    addSorting('bio-table', 'bio-body', { bio: 'text', biocount: 'number' });
+    addSorting('spectral-table', 'spectral-body', { spectral: 'text', types: 'text', total: 'number' });
 }
 
 // --- Список миров ---
@@ -337,7 +334,7 @@ export async function createWorld() {
         });
         if (res.ok) { document.getElementById('createResult').textContent = '✅ Мир создан'; loadStats(); loadWorlds(1); }
         else { const text = await res.text(); document.getElementById('createResult').textContent = '❌ ' + text; }
-    } catch (e) { document.getElementById('createResult').textContent = '❌ ' + e.message; }
+    } catch (e) { document.getElementById('createResult').textContent = '❌ ' + e.message); }
 }
 
 // --- Генерация вселенной ---
@@ -518,7 +515,7 @@ export async function clearUniverse() {
         const res = await fetchWithAuth('/admin/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
         if (res.ok) { document.getElementById('clearResult').textContent = '✅ Вселенная очищена'; loadStats(); loadWorlds(1); }
         else { const text = await res.text(); document.getElementById('clearResult').textContent = '❌ Ошибка: ' + text; }
-    } catch (e) { document.getElementById('clearResult').textContent = '❌ ' + e.message; }
+    } catch (e) { document.getElementById('clearResult').textContent = '❌ ' + e.message); }
 }
 
 // --- Инициализация ---
