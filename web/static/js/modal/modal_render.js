@@ -1,4 +1,4 @@
-// web/static/js/modal/render.js
+// web/static/js/modal/modal_render.js
 import { modalState } from './state.js';
 import { drawMiniMap } from './minimap.js';
 import { getPlanetTexture } from './textures.js';
@@ -65,7 +65,7 @@ export async function drawSystem(canvas, spectralClass, planets, starRadius, sta
     ctx.fill();
     ctx.restore();
 
-    // ---- СЛОЙ 3: ПЛАНЕТЫ (АСИНХРОННАЯ ЗАГРУЗКА) ----
+    // ---- СЛОЙ 3: ПЛАНЕТЫ (АСИНХРОННАЯ ЗАГРУЗКА ТЕКСТУР) ----
     if (planets && planets.length > 0) {
         const loadPromises = planets.map(async (p, idx) => {
             const randomOffset = (idx * 1.7) % 0.2 - 0.1;
@@ -87,16 +87,14 @@ export async function drawSystem(canvas, spectralClass, planets, starRadius, sta
 
         const loaded = await Promise.all(loadPromises);
 
-        // Рисуем все планеты
         loaded.forEach(({ x, y, radius, texture, idx }) => {
-            if (texture && texture.complete && texture.naturalWidth > 0) {
+            if (texture && texture instanceof HTMLImageElement && texture.complete && texture.naturalWidth > 0) {
                 ctx.save();
                 ctx.shadowColor = 'rgba(255,255,255,0.1)';
                 ctx.shadowBlur = 8;
                 ctx.drawImage(texture, x - radius, y - radius, radius * 2, radius * 2);
                 ctx.restore();
             } else {
-                // fallback круг
                 const p = planets[idx];
                 let color = '#aaa';
                 const type = (p.type || '').toLowerCase();
@@ -148,7 +146,7 @@ export async function drawSystem(canvas, spectralClass, planets, starRadius, sta
             }
         }
 
-        // ---- ПОДСВЕТКА ВЫБРАННОЙ ПЛАНЕТЫ (поверх всего) ----
+        // ---- ПОДСВЕТКА ВЫБРАННОЙ ПЛАНЕТЫ ----
         if (modalState.selectedPlanetIndex !== null) {
             const p = loaded[modalState.selectedPlanetIndex];
             if (p) {

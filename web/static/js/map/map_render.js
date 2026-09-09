@@ -1,4 +1,4 @@
-// web/static/js/map/render.js
+// web/static/js/map/map_render.js
 import { state, elements } from './config.js';
 import { isFiniteNumber, worldToCanvas, getStarColor } from './utils.js';
 import { CONFIG } from '../config.js';
@@ -15,11 +15,10 @@ export function resizeCanvas() {
 }
 
 export function draw() {
-    const { canvasWidth, canvasHeight, currentWorldId, isFlying, flyStartTime, flyDuration, flyFrom, flyTo, scale, offsetX, offsetY, filteredWorlds } = state;
+    const { canvasWidth, canvasHeight, currentWorldId, isFlying, flyStartTime, flyDuration, flyFrom, flyTo, scale, offsetX, offsetY, filteredWorlds, worlds } = state;
     const { ctx, statusBar } = elements;
 
-    // Используем отфильтрованные миры, если они есть
-    const worldsToDraw = filteredWorlds || state.worlds || [];
+    const worldsToDraw = filteredWorlds || worlds || [];
 
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
@@ -51,7 +50,6 @@ export function draw() {
         const pos = worldToCanvas(w);
         if (!isFiniteNumber(pos.x) || !isFiniteNumber(pos.y)) return;
 
-        // Размер по спектру
         const spectralSizeMap = {
             'O': 21, 'B': 19.5, 'A': 18,
             'F': 16.5, 'G': 15,
@@ -68,7 +66,9 @@ export function draw() {
         const radius = Math.max(mapCfg.minRadius, baseSize * variation * scale);
         const color = getStarColor(w.spectral_class || 'G');
 
-        // Обычная отрисовка
+        const opacity = w.opacity !== undefined ? w.opacity : 1;
+        ctx.globalAlpha = opacity;
+
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color;
@@ -77,7 +77,6 @@ export function draw() {
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // Подсветка текущего мира
         if (w.id === currentWorldId) {
             try {
                 const glow = ctx.createRadialGradient(pos.x, pos.y, Math.max(0, radius - 2), pos.x, pos.y, radius + 10);
@@ -96,7 +95,6 @@ export function draw() {
             }
         }
 
-        // Подсветка при ховере
         if (w.id === state.hoveredWorldId) {
             ctx.save();
             ctx.shadowColor = 'rgba(255,255,255,0.3)';
@@ -110,9 +108,10 @@ export function draw() {
             ctx.stroke();
             ctx.restore();
         }
+
+        ctx.globalAlpha = 1;
     });
 
-    // Подписи (поверх всего)
     if (scale > mapCfg.nameDisplayThreshold) {
         worldsToDraw.forEach(w => {
             const pos = worldToCanvas(w);
@@ -131,14 +130,16 @@ export function draw() {
             }
             const variation = 0.9 + (hash % 20) / 100;
             const radius = Math.max(mapCfg.minRadius, baseSize * variation * scale);
+            const opacity = w.opacity !== undefined ? w.opacity : 1;
+            ctx.globalAlpha = opacity;
             ctx.fillStyle = '#94a3b8';
             ctx.font = `${Math.max(8, mapCfg.nameFontSize * scale)}px system-ui`;
             ctx.textAlign = 'center';
             ctx.fillText(w.name, pos.x, pos.y + radius + mapCfg.nameFontSize * scale);
+            ctx.globalAlpha = 1;
         });
     }
 
-    // Анимация полёта
     if (isFlying && flyFrom && flyTo) {
         const elapsed = (Date.now() - flyStartTime) / 1000;
         const progress = Math.min(elapsed / flyDuration, 1);
@@ -177,16 +178,17 @@ export function draw() {
         }
     }
 
-    // Статус-бар
     if (isFlying) {
         const elapsed = (Date.now() - flyStartTime) / 1000;
         const remaining = Math.max(0, flyDuration - elapsed);
         statusBar.textContent = `🚀 В полёте... осталось ${Math.ceil(remaining)} сек.`;
     } else {
-        const total = state.worlds ? state.worlds.length : 0;
+        const total = worlds ? worlds.length : 0;
         const shown = worldsToDraw.length;
-        statusBar.textContent = shown === total
-            ? `${shown} миров на карте`
-            : `Показано ${shown} из ${total} миров`;
+        if (shown === total) {
+            statusBar.textContent = `${shown} миров на карте`;
+        } else {
+            statusBar.textContent = `Показано ${shown} из ${total} миров`;
+        }
     }
 }

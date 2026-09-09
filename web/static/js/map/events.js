@@ -1,13 +1,15 @@
+// web/static/js/map/events.js
 import { state, elements } from './config.js';
 import { worldToCanvas, isFiniteNumber } from './utils.js';
-import { draw } from './render.js';
+import { draw } from './map_render.js'; // <-- обновлён импорт
 import { loadData } from './data.js';
 import { centerOnAgent } from './navigation.js';
 import { CONFIG } from '../config.js';
+import { openSystemModal } from '../modal/index.js';
 
 const { map: mapCfg, ui: uiCfg } = CONFIG;
 
-// --- HOVER: определение мира под курсором ---
+// --- HOVER ---
 export function initHover() {
     elements.canvas.addEventListener('mousemove', (e) => {
         const rect = elements.canvas.getBoundingClientRect();
@@ -16,7 +18,8 @@ export function initHover() {
 
         let found = null;
         let minDist = mapCfg.minDistForClick;
-        state.worlds.forEach(w => {
+        const worldsToCheck = state.filteredWorlds || state.worlds || [];
+        worldsToCheck.forEach(w => {
             const pos = worldToCanvas(w);
             if (!isFiniteNumber(pos.x) || !isFiniteNumber(pos.y)) return;
             const dist = Math.hypot(mouseX - pos.x, mouseY - pos.y);
@@ -26,7 +29,6 @@ export function initHover() {
             }
         });
 
-        // Обновляем состояние и перерисовываем только если изменилось
         if (found) {
             if (state.hoveredWorldId !== found.id) {
                 state.hoveredWorldId = found.id;
@@ -42,7 +44,6 @@ export function initHover() {
         }
     });
 
-    // При выходе мыши за пределы Canvas сбрасываем подсветку
     elements.canvas.addEventListener('mouseleave', () => {
         if (state.hoveredWorldId !== null) {
             state.hoveredWorldId = null;
@@ -52,15 +53,21 @@ export function initHover() {
     });
 }
 
-// --- КЛИК ---
+// --- CLICK ---
 export function handleCanvasClick(e) {
+    // Если был drag, игнорируем клик
+    if (state.isDragging) {
+        return;
+    }
+
     const rect = elements.canvas.getBoundingClientRect();
     const mouseX = (e.clientX - rect.left) * (elements.canvas.width / rect.width);
     const mouseY = (e.clientY - rect.top) * (elements.canvas.height / rect.height);
 
     let found = null;
     let minDist = mapCfg.minDistForClick;
-    state.worlds.forEach(w => {
+    const worldsToCheck = state.filteredWorlds || state.worlds || [];
+    worldsToCheck.forEach(w => {
         const pos = worldToCanvas(w);
         if (!isFiniteNumber(pos.x) || !isFiniteNumber(pos.y)) return;
         const dist = Math.hypot(mouseX - pos.x, mouseY - pos.y);
@@ -71,13 +78,11 @@ export function handleCanvasClick(e) {
     });
 
     if (found) {
-        // --- ОТКРЫВАЕМ МОДАЛКУ С СИСТЕМОЙ ---
-        if (typeof window.openSystemModal === 'function') {
-            window.openSystemModal(found.id, found.name, found.spectral_class || 'G');
+        if (typeof openSystemModal === 'function') {
+            openSystemModal(found.id, found.name, found.spectral_class || 'G');
         } else {
-            console.warn('openSystemModal не загружена');
+            console.warn('openSystemModal not loaded');
         }
-        // Скрываем тултип
         elements.tooltip.classList.remove('active');
         state.selectedWorldId = found.id;
     } else {
@@ -86,7 +91,7 @@ export function handleCanvasClick(e) {
     }
 }
 
-// --- КНОПКА "ЛЕТЕТЬ" (без изменений) ---
+// --- КНОПКА "ЛЕТЕТЬ" ---
 export function initFlyBtn() {
     elements.tooltipFlyBtn.addEventListener('click', async function(e) {
         e.stopPropagation();
@@ -133,7 +138,7 @@ export function initFlyBtn() {
     });
 }
 
-// --- ПАНОРАМИРОВАНИЕ И ЗУМ (с обновлением курсора) ---
+// --- PAN / ZOOM ---
 export function initPanZoom() {
     elements.canvas.addEventListener('mousedown', (e) => {
         if (e.target === elements.canvas) {
@@ -159,7 +164,6 @@ export function initPanZoom() {
     window.addEventListener('mouseup', () => {
         if (state.isDragging) {
             state.isDragging = false;
-            // Возвращаем курсор на crosshair (если не hover)
             if (state.hoveredWorldId === null) {
                 elements.canvas.style.cursor = 'crosshair';
             } else {

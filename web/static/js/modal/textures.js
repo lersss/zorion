@@ -9,15 +9,21 @@ export function getPlanetTexture(planet, spectralClass, sizeMultiplier) {
 
     const seed = planet.id ? hashStringToNumber(planet.id) : Date.now() + planet.orbit_index;
     const climateId = getClimateId(planet);
-    const radius = Math.min(30, 15 + (planet.size || 10) * 1.2);
+    // Увеличиваем радиус для лучшего качества
+    const radius = Math.min(40, 20 + (planet.size || 10) * 1.5);
 
     const url = `/api/planet-image?seed=${seed}&starType=${spectralClass}&climateId=${climateId}&radius=${radius}`;
 
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
+    // Создаём промис, который загружает изображение через fetch
     const promise = new Promise((resolve, reject) => {
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('Failed to load planet image'));
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            resolve(img);
+        };
+        img.onerror = () => {
+            reject(new Error('Failed to load planet texture'));
+        };
         img.src = url;
     });
 
@@ -29,6 +35,7 @@ export function clearTextureCache() {
     textureCache.clear();
 }
 
+// Вспомогательные функции
 function hashStringToNumber(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {

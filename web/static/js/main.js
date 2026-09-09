@@ -1,6 +1,6 @@
 // web/static/js/main.js
 import { state, elements } from './map/config.js';
-import { resizeCanvas } from './map/render.js';
+import { resizeCanvas } from './map/map_render.js';
 import { handleCanvasClick, initFlyBtn, initPanZoom, initHover } from './map/events.js';
 import { animationLoop } from './map/animation.js';
 import { centerOnAgent } from './map/navigation.js';
@@ -107,18 +107,9 @@ function init() {
     initPanZoom();
     initHover();
 
-    // --- Инициализация фильтров ---
-    const applyBtn = document.getElementById('apply-filters');
-    const resetBtn = document.getElementById('reset-filters');
-
-    // Автоматическое применение фильтров при изменении любого элемента
+    // --- Автоматическое применение фильтров ---
     const filterInputs = document.querySelectorAll('#filters-bar input, #filters-bar select');
-    filterInputs.forEach(el => {
-        el.addEventListener('change', () => {
-            // Триггерим применение фильтров
-            applyFilters();
-        });
-    });
+    let timeoutId = null;
 
     async function applyFilters() {
         applyFiltersFromUI();
@@ -129,7 +120,6 @@ function init() {
         if (filterState.planetType) filters.planetType = filterState.planetType;
         if (filterState.resourceCategory) filters.resourceCategory = filterState.resourceCategory;
 
-        // Показываем спиннер
         const spinner = document.getElementById('filter-spinner');
         const countEl = document.getElementById('filter-count');
         if (spinner) spinner.style.display = 'inline-block';
@@ -137,7 +127,6 @@ function init() {
 
         try {
             await loadAllData(filters);
-            // Обновляем счётчик
             if (countEl) {
                 const activeCount = Object.keys(filters).length;
                 countEl.textContent = activeCount > 0 ? `(${activeCount})` : '';
@@ -150,6 +139,14 @@ function init() {
         }
     }
 
+    filterInputs.forEach(el => {
+        el.addEventListener('change', () => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(applyFilters, 300);
+        });
+    });
+
+    const resetBtn = document.getElementById('reset-filters');
     if (resetBtn) {
         resetBtn.addEventListener('click', async () => {
             resetFilters();
@@ -175,7 +172,6 @@ function init() {
         });
     }
 
-    // Первоначальная загрузка без фильтров
     loadAllData(null).then(() => {
         animationLoop();
     });

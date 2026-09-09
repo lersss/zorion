@@ -1,6 +1,6 @@
 // web/static/js/modal/index.js
 import { modalState, resetState } from './state.js';
-import { drawSystem } from './render.js';
+import { drawSystem } from './modal_render.js'; // <-- обновлён импорт
 import { initEvents } from './events.js';
 import { clearTextureCache } from './textures.js';
 import { getStarColor, getStarSize } from './utils.js';
@@ -39,7 +39,6 @@ function renderModal(worldName, spectralClass, planets) {
     if (document.getElementById('system-modal-overlay')) return;
 
     resetState();
-    modalState.planets = planets;
 
     const starColor = getStarColor(spectralClass);
     const starRadius = getStarSize(spectralClass);
@@ -159,6 +158,14 @@ function renderModal(worldName, spectralClass, planets) {
         if (e.target === overlay) closeModal();
     });
 
+    // ESC для закрытия
+    function handleKeydown(e) {
+        if (e.key === 'Escape') {
+            closeModal();
+        }
+    }
+    document.addEventListener('keydown', handleKeydown);
+
     // Размеры
     const rect = canvasWrapper.getBoundingClientRect();
     const width = rect.width;
@@ -172,6 +179,7 @@ function renderModal(worldName, spectralClass, planets) {
     modalState.canvasWrapper = canvasWrapper;
     modalState.spectralClass = spectralClass;
     modalState.selectedPlanetIndex = null;
+    modalState.planets = planets;
 
     clearTextureCache();
 
@@ -214,6 +222,9 @@ function renderModal(worldName, spectralClass, planets) {
         drawSystem(canvas, spectralClass, planets, starRadius, starColor, newRect.width, newRect.height);
     });
     resizeObserver.observe(canvasWrapper);
+
+    // Сохраняем слушатель ESC для удаления
+    modalState._escListener = handleKeydown;
 }
 
 function renderRightPanel(planets, selectedIndex) {
@@ -388,6 +399,11 @@ function closeModal() {
     const overlay = document.getElementById('system-modal-overlay');
     if (overlay) overlay.remove();
     resetState();
+    // Удаляем слушатель ESC
+    if (modalState._escListener) {
+        document.removeEventListener('keydown', modalState._escListener);
+        delete modalState._escListener;
+    }
     delete window.updateRightPanel;
 }
 

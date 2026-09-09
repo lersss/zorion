@@ -1,6 +1,6 @@
 // web/static/js/modal/events.js
 import { modalState } from './state.js';
-import { drawSystem } from './render.js';
+import { drawSystem } from './modal_render.js';
 
 export function initEvents(canvas, spectralClass, planets, starRadius, starColor, width, height) {
     // Получаем DPR (устройство пикселей на CSS-пиксель)

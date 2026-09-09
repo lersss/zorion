@@ -1,5 +1,5 @@
 import { state, elements } from './config.js';
-import { draw } from './render.js';
+import { draw } from './map_render.js';
 import { loadData } from './data.js';
 
 export function animationLoop() {

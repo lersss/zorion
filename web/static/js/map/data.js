@@ -4,7 +4,7 @@ import { isFiniteNumber, worldToCanvas, getStarColor } from './utils.js';
 import { CONFIG } from '../config.js';
 import { centerOnAgent } from './navigation.js';
 import { filterState } from '../filters.js';
-import { resizeCanvas } from './render.js'; // <-- импорт
+import { resizeCanvas } from './map_render.js'; // <-- обновлён импорт
 
 const { map: mapCfg } = CONFIG;
 
@@ -49,7 +49,7 @@ export async function loadData() {
             }
         }
 
-        resizeCanvas(); // теперь работает
+        resizeCanvas();
         if (elements.loading) elements.loading.style.display = 'none';
         if (elements.statusBar) {
             elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
