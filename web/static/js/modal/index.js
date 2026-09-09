@@ -39,6 +39,7 @@ function renderModal(worldName, spectralClass, planets) {
     if (document.getElementById('system-modal-overlay')) return;
 
     resetState();
+    modalState.planets = planets;
 
     const starColor = getStarColor(spectralClass);
     const starRadius = getStarSize(spectralClass);
@@ -105,7 +106,7 @@ function renderModal(worldName, spectralClass, planets) {
     header.appendChild(closeBtn);
     modal.appendChild(header);
 
-    // Контент: Canvas + таблица
+    // Контент: Canvas + правая панель
     const content = document.createElement('div');
     content.style.cssText = `
         display: flex;
@@ -135,9 +136,10 @@ function renderModal(worldName, spectralClass, planets) {
     canvasWrapper.appendChild(canvas);
     content.appendChild(canvasWrapper);
 
-    // Таблица
-    const tableWrapper = document.createElement('div');
-    tableWrapper.style.cssText = `
+    // Правая панель
+    const rightPanel = document.createElement('div');
+    rightPanel.id = 'right-panel';
+    rightPanel.style.cssText = `
         flex: 1;
         background: #12121f;
         border-radius: 12px;
@@ -146,50 +148,7 @@ function renderModal(worldName, spectralClass, planets) {
         min-width: 200px;
         max-height: 100%;
     `;
-    const tableTitle = document.createElement('h3');
-    tableTitle.textContent = 'Планеты';
-    tableTitle.style.cssText = `margin: 0 0 8px 0; font-size: 1rem; color: #aaa;`;
-    tableWrapper.appendChild(tableTitle);
-
-    const table = document.createElement('table');
-    table.style.cssText = `
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.8rem;
-    `;
-    const thead = document.createElement('thead');
-    thead.innerHTML = `
-        <tr>
-            <th>#</th>
-            <th>Тип</th>
-            <th>Размер</th>
-            <th>Температура</th>
-        </tr>
-    `;
-    thead.style.cssText = `text-align: left; color: #888; border-bottom: 1px solid #333;`;
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    if (planets && planets.length > 0) {
-        planets.forEach((p, idx) => {
-            const tr = document.createElement('tr');
-            tr.style.cssText = `border-bottom: 1px solid #1a1a2e;`;
-            tr.innerHTML = `
-                <td>${idx + 1}</td>
-                <td>${p.type || 'неизвестно'}</td>
-                <td>${p.size ? p.size.toFixed(1) : '-'}</td>
-                <td>${p.temperature ? p.temperature.toFixed(0) + 'K' : '-'}</td>
-            `;
-            tbody.appendChild(tr);
-        });
-    } else {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td colspan="4" style="text-align:center;color:#666;">Нет планет</td>`;
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    tableWrapper.appendChild(table);
-    content.appendChild(tableWrapper);
+    content.appendChild(rightPanel);
 
     modal.appendChild(content);
     overlay.appendChild(modal);
@@ -209,20 +168,44 @@ function renderModal(worldName, spectralClass, planets) {
     modalState.canvasHeight = height;
     modalState.starRadius = starRadius;
     modalState.starColor = starColor;
-    modalState.planets = planets;
     modalState.canvas = canvas;
     modalState.canvasWrapper = canvasWrapper;
     modalState.spectralClass = spectralClass;
+    modalState.selectedPlanetIndex = null;
 
     clearTextureCache();
 
-    // Отрисовка
+    // Первоначальная отрисовка системы
     requestAnimationFrame(() => {
         drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
     });
 
-    // Инициализация событий
+    // Рендерим правую панель (список)
+    renderRightPanel(planets, null);
+
+    // Инициализация событий (ховер, зум, панорамирование, клик)
     initEvents(canvas, spectralClass, planets, starRadius, starColor, width, height);
+
+    // Глобальная функция для обновления правой панели из events.js
+    window.updateRightPanel = (selectedIndex) => {
+        renderRightPanel(planets, selectedIndex);
+    };
+
+    // Обработчик клика по строкам таблицы
+    rightPanel.addEventListener('click', (e) => {
+        const row = e.target.closest('tr');
+        if (row && row.dataset.index !== undefined) {
+            const idx = parseInt(row.dataset.index);
+            if (!isNaN(idx) && idx >= 0 && idx < planets.length) {
+                if (modalState.selectedPlanetIndex !== idx) {
+                    modalState.selectedPlanetIndex = idx;
+                    renderRightPanel(planets, idx);
+                    // Перерисовываем Canvas для подсветки
+                    drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
+                }
+            }
+        }
+    });
 
     // Resize observer
     const resizeObserver = new ResizeObserver(() => {
@@ -234,10 +217,96 @@ function renderModal(worldName, spectralClass, planets) {
     resizeObserver.observe(canvasWrapper);
 }
 
+function renderRightPanel(planets, selectedIndex) {
+    const panel = document.getElementById('right-panel');
+    if (!panel) return;
+
+    if (selectedIndex === null || selectedIndex === undefined) {
+        // ---- РЕЖИМ СПИСКА ----
+        panel.innerHTML = `
+            <h3 style="margin: 0 0 8px 0; font-size: 1rem; color: #aaa;">Планеты</h3>
+            <table style="width:100%; border-collapse: collapse; font-size: 0.8rem;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; color:#888; border-bottom:1px solid #333;">#</th>
+                        <th style="text-align:left; color:#888; border-bottom:1px solid #333;">Тип</th>
+                        <th style="text-align:left; color:#888; border-bottom:1px solid #333;">Размер</th>
+                        <th style="text-align:left; color:#888; border-bottom:1px solid #333;">Температура</th>
+                    </tr>
+                </thead>
+                <tbody id="planet-list-body">
+                </tbody>
+            </table>
+        `;
+        const tbody = panel.querySelector('#planet-list-body');
+        if (planets && planets.length > 0) {
+            planets.forEach((p, idx) => {
+                const tr = document.createElement('tr');
+                tr.dataset.index = idx;
+                tr.style.cssText = `border-bottom: 1px solid #1a1a2e; cursor: pointer;`;
+                tr.innerHTML = `
+                    <td>${idx + 1}</td>
+                    <td>${p.type || 'неизвестно'}</td>
+                    <td>${p.size ? p.size.toFixed(1) : '-'}</td>
+                    <td>${p.temperature ? p.temperature.toFixed(0) + 'K' : '-'}</td>
+                `;
+                tr.addEventListener('mouseenter', () => { tr.style.background = '#1f1f3a'; });
+                tr.addEventListener('mouseleave', () => { tr.style.background = 'transparent'; });
+                tbody.appendChild(tr);
+            });
+        } else {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td colspan="4" style="text-align:center;color:#666;">Нет планет</td>`;
+            tbody.appendChild(tr);
+        }
+    } else {
+        // ---- РЕЖИМ КАРТОЧКИ ----
+        const planet = planets[selectedIndex];
+        if (!planet) {
+            renderRightPanel(planets, null);
+            return;
+        }
+
+        panel.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h3 style="margin: 0; font-size: 1rem; color: #aaa;">Планета #${selectedIndex + 1}</h3>
+                <button id="back-to-list-btn" style="background: #2a2a4a; border: none; color: #aaa; padding: 4px 12px; border-radius: 4px; cursor: pointer;">← Назад</button>
+            </div>
+            <div style="font-size: 0.85rem; line-height: 1.6;">
+                <p><strong>Название:</strong> ${planet.name || '—'}</p>
+                <p><strong>Тип:</strong> ${planet.type || '—'}</p>
+                <p><strong>Размер:</strong> ${planet.size ? planet.size.toFixed(2) : '—'}</p>
+                <p><strong>Масса:</strong> ${planet.mass ? planet.mass.toFixed(2) : '—'}</p>
+                <p><strong>Атмосфера:</strong> ${planet.atmosphere || '—'}</p>
+                <p><strong>Температура:</strong> ${planet.temperature ? planet.temperature.toFixed(0) + ' K' : '—'}</p>
+                <p><strong>Вода:</strong> ${planet.water_percent ? planet.water_percent.toFixed(1) + '%' : '—'}</p>
+                <p><strong>Обитаемость:</strong> ${planet.habitable ? 'Да' : 'Нет'}</p>
+                <p><strong>Жизнь:</strong> ${planet.life ? 'Да' : 'Нет'}</p>
+                <p><strong>Население:</strong> ${planet.population ? planet.population.toLocaleString() : '—'}</p>
+            </div>
+        `;
+
+        const backBtn = panel.querySelector('#back-to-list-btn');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => {
+                modalState.selectedPlanetIndex = null;
+                renderRightPanel(planets, null);
+                // Перерисовываем Canvas для снятия подсветки
+                const canvas = document.getElementById('system-canvas');
+                if (canvas) {
+                    drawSystem(canvas, modalState.spectralClass, planets, modalState.starRadius, modalState.starColor, modalState.canvasWidth, modalState.canvasHeight);
+                }
+            });
+        }
+    }
+}
+
 function closeModal() {
     const overlay = document.getElementById('system-modal-overlay');
     if (overlay) overlay.remove();
     resetState();
+    // Удаляем глобальную функцию
+    delete window.updateRightPanel;
 }
 
 // Добавляем стиль анимации

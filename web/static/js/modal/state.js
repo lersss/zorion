@@ -1,4 +1,4 @@
-// state.js
+// web/static/js/modal/state.js
 export const modalState = {
     zoom: 1,
     offsetX: 0,
@@ -8,7 +8,8 @@ export const modalState = {
     dragStartY: 0,
     dragStartOffsetX: 0,
     dragStartOffsetY: 0,
-    hoveredObject: null, // 'star' или { type: 'planet', index: idx }
+    hoveredObject: null,
+    selectedPlanetIndex: null, // <-- добавили
     canvasWidth: 0,
     canvasHeight: 0,
     starRadius: 60,
@@ -25,4 +26,5 @@ export function resetState() {
     modalState.offsetY = 0;
     modalState.isDragging = false;
     modalState.hoveredObject = null;
+    modalState.selectedPlanetIndex = null; // <-- сбрасываем
 }
