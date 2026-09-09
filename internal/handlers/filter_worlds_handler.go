@@ -20,13 +20,7 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 	}()
 
 	queryParams := r.URL.Query()
-
-	// --- Временно используем только hasPlanets, остальные закомментированы ---
 	hasPlanets := queryParams.Get("has_planets") == "true"
-	// hasLife := queryParams.Get("has_life") == "true"
-	// hasHabitable := queryParams.Get("has_habitable") == "true"
-	// planetType := queryParams.Get("planet_type")
-	// resourceCategory := queryParams.Get("resource_category")
 
 	sqlQuery := `
 		SELECT w.id, w.name, w.coord_x, w.coord_y, w.spectral_class, w.temperature, w.created_at, w.updated_at
@@ -38,6 +32,9 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 	if hasPlanets {
 		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id)`
 	}
+
+	// Логируем запрос перед выполнением
+	log.Printf("🔍 FilterWorldsHandler SQL: %s, args: %v", sqlQuery, args)
 
 	rows, err := h.db.Query(sqlQuery, args...)
 	if err != nil {
