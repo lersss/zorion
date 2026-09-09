@@ -1,3 +1,4 @@
+// web/static/js/map/render.js
 import { state, elements } from './config.js';
 import { isFiniteNumber, worldToCanvas, getStarColor } from './utils.js';
 import { CONFIG } from '../config.js';
@@ -14,8 +15,11 @@ export function resizeCanvas() {
 }
 
 export function draw() {
-    const { canvasWidth, canvasHeight, worlds, currentWorldId, isFlying, flyStartTime, flyDuration, flyFrom, flyTo, scale, offsetX, offsetY, hoveredWorldId } = state;
+    const { canvasWidth, canvasHeight, currentWorldId, isFlying, flyStartTime, flyDuration, flyFrom, flyTo, scale, offsetX, offsetY, filteredWorlds } = state;
     const { ctx, statusBar } = elements;
+
+    // Используем отфильтрованные миры, если они есть
+    const worldsToDraw = filteredWorlds || state.worlds || [];
 
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
@@ -42,8 +46,8 @@ export function draw() {
         }
     }
 
-    // --- ПЕРВЫЙ ПРОХОД: Миры (без подписей) ---
-    worlds.forEach(w => {
+    // Миры
+    worldsToDraw.forEach(w => {
         const pos = worldToCanvas(w);
         if (!isFiniteNumber(pos.x) || !isFiniteNumber(pos.y)) return;
 
@@ -73,7 +77,7 @@ export function draw() {
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // Подсветка текущего мира (игрока)
+        // Подсветка текущего мира
         if (w.id === currentWorldId) {
             try {
                 const glow = ctx.createRadialGradient(pos.x, pos.y, Math.max(0, radius - 2), pos.x, pos.y, radius + 10);
@@ -92,9 +96,8 @@ export function draw() {
             }
         }
 
-        // --- Подсветка при наведении (hover) ---
-        if (w.id === hoveredWorldId) {
-            // Полупрозрачная заливка и обводка
+        // Подсветка при ховере
+        if (w.id === state.hoveredWorldId) {
             ctx.save();
             ctx.shadowColor = 'rgba(255,255,255,0.3)';
             ctx.shadowBlur = 12;
@@ -109,12 +112,11 @@ export function draw() {
         }
     });
 
-    // --- ВТОРОЙ ПРОХОД: Подписи (поверх всего) ---
+    // Подписи (поверх всего)
     if (scale > mapCfg.nameDisplayThreshold) {
-        worlds.forEach(w => {
+        worldsToDraw.forEach(w => {
             const pos = worldToCanvas(w);
             if (!isFiniteNumber(pos.x) || !isFiniteNumber(pos.y)) return;
-            // Вычисляем радиус, чтобы подпись была под ним
             const spectralSizeMap = {
                 'O': 21, 'B': 19.5, 'A': 18,
                 'F': 16.5, 'G': 15,
@@ -136,7 +138,7 @@ export function draw() {
         });
     }
 
-    // --- Анимация полёта ---
+    // Анимация полёта
     if (isFlying && flyFrom && flyTo) {
         const elapsed = (Date.now() - flyStartTime) / 1000;
         const progress = Math.min(elapsed / flyDuration, 1);
@@ -175,12 +177,16 @@ export function draw() {
         }
     }
 
-    // --- Статус-бар ---
+    // Статус-бар
     if (isFlying) {
         const elapsed = (Date.now() - flyStartTime) / 1000;
         const remaining = Math.max(0, flyDuration - elapsed);
         statusBar.textContent = `🚀 В полёте... осталось ${Math.ceil(remaining)} сек.`;
     } else {
-        statusBar.textContent = worlds.length ? 'Выберите мир на карте' : 'Нет миров для отображения';
+        const total = state.worlds ? state.worlds.length : 0;
+        const shown = worldsToDraw.length;
+        statusBar.textContent = shown === total
+            ? `${shown} миров на карте`
+            : `Показано ${shown} из ${total} миров`;
     }
 }

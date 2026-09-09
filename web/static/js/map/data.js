@@ -1,120 +1,141 @@
+// web/static/js/map/data.js
 import { state, elements } from './config.js';
-import { isFiniteNumber } from './utils.js';
-import { resizeCanvas, draw } from './render.js';
+import { isFiniteNumber, worldToCanvas, getStarColor } from './utils.js';
+import { CONFIG } from '../config.js';
 import { centerOnAgent } from './navigation.js';
+import { filterState } from '../filters.js';
 
-let isDataLoaded = false;
+const { map: mapCfg } = CONFIG;
 
-export async function loadUserData() {
-    const token = localStorage.getItem('token');
-    if (!token) return;
+let loadingData = false;
+let dataLoaded = false;
+
+export async function loadData() {
+    if (loadingData) return;
+    loadingData = true;
+    elements.loading.style.display = 'block';
+    elements.statusBar.textContent = '⏳ Загрузка данных...';
+
     try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+            throw new Error('No token');
+        }
+        const res = await fetch('/worlds', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) {
+            throw new Error('Failed to fetch worlds');
+        }
+        const worlds = await res.json();
+        state.worlds = worlds;
+        dataLoaded = true;
+
+        // Загружаем данные пользователя
+        await loadUserData();
+
+        // Применяем фильтры (если активны)
+        state.filteredWorlds = filterWorlds(state.worlds);
+
+        // Центрируем карту
+        if (state.currentWorldId) {
+            centerOnAgent();
+        } else {
+            // Центр на первом мире
+            if (state.worlds.length > 0) {
+                const first = state.worlds[0];
+                const pos = worldToCanvas(first);
+                if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
+                    state.offsetX = state.canvasWidth / 2 - pos.x;
+                    state.offsetY = state.canvasHeight / 2 - pos.y;
+                }
+            }
+        }
+
+        resizeCanvas();
+        elements.loading.style.display = 'none';
+        elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
+        return state.worlds;
+    } catch (err) {
+        console.error('Load data error:', err);
+        elements.loading.textContent = '❌ Ошибка загрузки данных';
+        elements.statusBar.textContent = '❌ Ошибка';
+        throw err;
+    } finally {
+        loadingData = false;
+    }
+}
+
+async function loadUserData() {
+    try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
         const res = await fetch('/me', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
-        if (res.ok) {
-            const data = await res.json();
-            state.currentWorldId = data.current_world_id;
-            elements.currentWorldNameEl.textContent = data.current_world_name || '—';
-            console.log('User data loaded, currentWorldId:', state.currentWorldId);
-        }
-    } catch (e) {
-        console.error('Failed to load user data:', e);
-    }
-}
-
-export async function loadData() {
-    console.log('loadData started');
-    if (isDataLoaded) {
-        console.log('loadData already loaded, skipping');
-        return;
-    }
-    isDataLoaded = true;
-
-    const token = localStorage.getItem('token');
-    if (!token) {
-        console.error('No token found');
-        elements.statusBar.textContent = '❌ Не авторизован. Перейдите на /login-page';
-        elements.loadingEl.style.display = 'none';
-        isDataLoaded = false;
-        return;
-    }
-    try {
-        console.log('Loading user data...');
-        await loadUserData();
-
-        console.log('Fetching worlds...');
-        const worldsRes = await fetch('/worlds', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        if (!worldsRes.ok) {
-            const errText = await worldsRes.text();
-            console.error('Worlds fetch error:', errText);
-            elements.statusBar.textContent = '❌ Ошибка загрузки миров: ' + errText;
-            elements.loadingEl.style.display = 'none';
-            isDataLoaded = false;
-            return;
-        }
-        state.worlds = await worldsRes.json();
-        console.log('Worlds fetched:', state.worlds.length);
-
-        state.worlds = state.worlds.filter(w => isFiniteNumber(w.coord_x) && isFiniteNumber(w.coord_y));
-        console.log('Worlds after filtering:', state.worlds.length);
-
-        state.worlds.forEach(w => {
-            w.level = Math.floor(Math.random() * 5) + 1;
-            const types = ['tech', 'agri', 'military', 'trade', 'mixed'];
-            w.type = types[Math.floor(Math.random() * types.length)];
-        });
-        console.log('Worlds processed with level and type');
-
-        elements.loadingEl.style.display = 'none';
-
-        if (state.worlds.length > 0) {
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-            state.worlds.forEach(w => {
-                if (w.coord_x < minX) minX = w.coord_x;
-                if (w.coord_x > maxX) maxX = w.coord_x;
-                if (w.coord_y < minY) minY = w.coord_y;
-                if (w.coord_y > maxY) maxY = w.coord_y;
-            });
-            const rangeX = maxX - minX || 1;
-            const rangeY = maxY - minY || 1;
-            const range = Math.max(rangeX, rangeY);
-            if (range === 0) {
-                state.scale = 1;
-                state.offsetX = state.canvasWidth / 2;
-                state.offsetY = state.canvasHeight / 2;
-            } else {
-                const centerX = (minX + maxX) / 2;
-                const centerY = (minY + maxY) / 2;
-                const padding = 80;
-                const maxSize = Math.min(state.canvasWidth - padding * 2, state.canvasHeight - padding * 2);
-                state.scale = maxSize / (range * 1.2);
-                state.offsetX = state.canvasWidth / 2 - centerX * state.scale;
-                state.offsetY = state.canvasHeight / 2 - centerY * state.scale;
+        if (!res.ok) return;
+        const user = await res.json();
+        if (user.current_world_id) {
+            state.currentWorldId = user.current_world_id;
+            const world = state.worlds.find(w => w.id === user.current_world_id);
+            if (world) {
+                document.getElementById('currentWorldName').textContent = world.name;
             }
-            console.log('Map scale:', state.scale, 'offsetX:', state.offsetX, 'offsetY:', state.offsetY);
         }
-        resizeCanvas();
-
-        if (!state.currentWorldId && state.worlds.length > 0) {
-            console.log('No currentWorldId, centering on first world without travel');
-            state.currentWorldId = state.worlds[0].id;
-            elements.currentWorldNameEl.textContent = state.worlds[0].name;
-        }
-
-        console.log('Calling centerOnAgent...');
-        setTimeout(() => {
-            centerOnAgent();
-        }, 100);
-        elements.statusBar.textContent = 'Загружено миров: ' + state.worlds.length;
-        console.log('loadData completed successfully');
-        isDataLoaded = false;
     } catch (e) {
-        console.error('Load error:', e);
-        elements.statusBar.textContent = '❌ Ошибка загрузки данных: ' + e.message;
-        elements.loadingEl.style.display = 'none';
-        isDataLoaded = false;
+        console.warn('Failed to load user data:', e);
     }
 }
+
+export function filterWorlds(worlds) {
+    if (!worlds || worlds.length === 0) return [];
+
+    const hasActiveFilters = filterState.hasPlanets || filterState.hasLife || filterState.hasHabitable ||
+                             filterState.planetType || filterState.resourceCategory;
+    if (!hasActiveFilters) return worlds;
+
+    return worlds.filter(world => {
+        // Если у мира нет планет
+        if (!world.planets || world.planets.length === 0) {
+            if (filterState.hasPlanets) return false;
+            if (filterState.hasLife) return false;
+            if (filterState.hasHabitable) return false;
+            if (filterState.planetType) return false;
+            if (filterState.resourceCategory) return false;
+            return true;
+        }
+
+        // Проверяем планеты
+        if (filterState.hasPlanets && world.planets.length === 0) return false;
+
+        if (filterState.hasLife) {
+            const hasLife = world.planets.some(p => p.life === true);
+            if (!hasLife) return false;
+        }
+
+        if (filterState.hasHabitable) {
+            const hasHabitable = world.planets.some(p => p.habitable === true);
+            if (!hasHabitable) return false;
+        }
+
+        if (filterState.planetType) {
+            const hasType = world.planets.some(p => (p.type || '').toLowerCase() === filterState.planetType.toLowerCase());
+            if (!hasType) return false;
+        }
+
+        if (filterState.resourceCategory) {
+            const hasResource = world.planets.some(p => {
+                if (!p.resources) return false;
+                const val = p.resources[filterState.resourceCategory];
+                return typeof val === 'number' && val > 0.3;
+            });
+            if (!hasResource) return false;
+        }
+
+        return true;
+    });
+}
+
+// Переопределяем resizeCanvas из render.js (чтобы не было циклических зависимостей)
+// Вместо этого мы используем draw() из render.js, который уже есть.
+// Но мы добавим в data.js вызов перерисовки после загрузки.
