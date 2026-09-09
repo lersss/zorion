@@ -5,7 +5,8 @@ import { handleCanvasClick, initFlyBtn, initPanZoom, initHover } from './map/eve
 import { animationLoop } from './map/animation.js';
 import { centerOnAgent } from './map/navigation.js';
 import { applyFiltersFromUI, resetFilters, filterState } from './filters.js';
-import { openSystemModal } from './modal/index.js'; // <-- добавлен импорт
+import { openSystemModal } from './modal/index.js';
+import { worldToCanvas, isFiniteNumber } from './map/utils.js';
 
 // --- Загрузка миров с фильтрацией ---
 async function loadWorldsWithFilters(filters) {
@@ -110,29 +111,43 @@ function init() {
     const applyBtn = document.getElementById('apply-filters');
     const resetBtn = document.getElementById('reset-filters');
 
-    if (applyBtn) {
-        applyBtn.addEventListener('click', async () => {
-            applyFiltersFromUI();
-            const filters = {};
-            if (filterState.hasPlanets) filters.hasPlanets = true;
-            if (filterState.hasLife) filters.hasLife = true;
-            if (filterState.hasHabitable) filters.hasHabitable = true;
-            if (filterState.planetType) filters.planetType = filterState.planetType;
-            if (filterState.resourceCategory) filters.resourceCategory = filterState.resourceCategory;
-
-            const statusEl = document.getElementById('filter-status');
-            if (statusEl) statusEl.textContent = '⏳ Применение...';
-
-            try {
-                await loadAllData(filters);
-                if (statusEl) {
-                    statusEl.textContent = `Показано: ${state.worlds.length} миров`;
-                }
-            } catch (e) {
-                console.error('Filter apply error:', e);
-                if (statusEl) statusEl.textContent = '❌ Ошибка применения фильтра';
-            }
+    // Автоматическое применение фильтров при изменении любого элемента
+    const filterInputs = document.querySelectorAll('#filters-bar input, #filters-bar select');
+    filterInputs.forEach(el => {
+        el.addEventListener('change', () => {
+            // Триггерим применение фильтров
+            applyFilters();
         });
+    });
+
+    async function applyFilters() {
+        applyFiltersFromUI();
+        const filters = {};
+        if (filterState.hasPlanets) filters.hasPlanets = true;
+        if (filterState.hasLife) filters.hasLife = true;
+        if (filterState.hasHabitable) filters.hasHabitable = true;
+        if (filterState.planetType) filters.planetType = filterState.planetType;
+        if (filterState.resourceCategory) filters.resourceCategory = filterState.resourceCategory;
+
+        // Показываем спиннер
+        const spinner = document.getElementById('filter-spinner');
+        const countEl = document.getElementById('filter-count');
+        if (spinner) spinner.style.display = 'inline-block';
+        if (countEl) countEl.textContent = '...';
+
+        try {
+            await loadAllData(filters);
+            // Обновляем счётчик
+            if (countEl) {
+                const activeCount = Object.keys(filters).length;
+                countEl.textContent = activeCount > 0 ? `(${activeCount})` : '';
+            }
+        } catch (e) {
+            console.error('Filter apply error:', e);
+            if (countEl) countEl.textContent = '❌';
+        } finally {
+            if (spinner) spinner.style.display = 'none';
+        }
     }
 
     if (resetBtn) {
@@ -143,19 +158,24 @@ function init() {
             document.getElementById('filter-habitable').checked = false;
             document.getElementById('filter-planet-type').value = '';
             document.getElementById('filter-resource').value = '';
-            const statusEl = document.getElementById('filter-status');
-            if (statusEl) statusEl.textContent = '⏳ Сброс...';
+            const spinner = document.getElementById('filter-spinner');
+            const countEl = document.getElementById('filter-count');
+            if (spinner) spinner.style.display = 'inline-block';
+            if (countEl) countEl.textContent = '...';
 
             try {
                 await loadAllData(null);
-                if (statusEl) statusEl.textContent = '';
+                if (countEl) countEl.textContent = '';
             } catch (e) {
                 console.error('Reset filter error:', e);
-                if (statusEl) statusEl.textContent = '❌ Ошибка сброса';
+                if (countEl) countEl.textContent = '❌';
+            } finally {
+                if (spinner) spinner.style.display = 'none';
             }
         });
     }
 
+    // Первоначальная загрузка без фильтров
     loadAllData(null).then(() => {
         animationLoop();
     });
