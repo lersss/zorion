@@ -1,4 +1,3 @@
-// internal/generator/planet/planet.go
 package planet
 
 import (
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-// ---------- Структуры для загрузки JSON с климатами ----------
+// ---------- Структуры для климатов ----------
 
 type ClimateWeight struct {
 	O float64 `json:"O"`
@@ -42,7 +41,7 @@ type ClimateData struct {
 	Climates []Climate `json:"climates"`
 }
 
-// ---------- Генератор ----------
+// ---------- Генератор изображений ----------
 
 type PlanetGenerator struct {
 	climates      []Climate
@@ -115,7 +114,6 @@ func WithCacheEnabled(enabled bool) func(*PlanetGenerator) {
 func WithMaxCacheSize(size int) func(*PlanetGenerator) {
 	return func(pg *PlanetGenerator) { pg.maxCacheSize = size }
 }
-// WithSeed для генератора удалён — используем WithSeed из GenerateOptions
 
 // ---------- Опции для генерации ----------
 type GenerateOptions struct {
@@ -158,19 +156,19 @@ func WithRings(b bool) func(*GenerateOptions) {
 	return func(o *GenerateOptions) { o.HasRings = &b }
 }
 
-// ---------- Основной метод генерации ----------
+// ---------- Основной метод ----------
 
 func (pg *PlanetGenerator) GeneratePlanet(radius int, opts ...func(*GenerateOptions)) (*CachedPlanet, error) {
 	options := &GenerateOptions{
-		Radius:     radius,
-		StarType:   "",
-		ClimateID:  "",
-		Surface:    "",
+		Radius:      radius,
+		StarType:    "",
+		ClimateID:   "",
+		Surface:     "",
 		Hydrosphere: "",
-		Atmosphere: "",
-		Biosphere:  "",
-		HasRings:   nil,
-		Seed:       0,
+		Atmosphere:  "",
+		Biosphere:   "",
+		HasRings:    nil,
+		Seed:        0,
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -281,14 +279,22 @@ func (pg *PlanetGenerator) selectClimateByStarType(starType string, rng *rand.Ra
 		c := &pg.climates[i]
 		var w float64
 		switch starType {
-		case "O": w = c.Weight.O
-		case "B": w = c.Weight.B
-		case "A": w = c.Weight.A
-		case "F": w = c.Weight.F
-		case "G": w = c.Weight.G
-		case "K": w = c.Weight.K
-		case "M": w = c.Weight.M
-		default: w = 0
+		case "O":
+			w = c.Weight.O
+		case "B":
+			w = c.Weight.B
+		case "A":
+			w = c.Weight.A
+		case "F":
+			w = c.Weight.F
+		case "G":
+			w = c.Weight.G
+		case "K":
+			w = c.Weight.K
+		case "M":
+			w = c.Weight.M
+		default:
+			w = 0
 		}
 		if w > 0 {
 			weighted = append(weighted, wc{climate: c, weight: w})
@@ -298,25 +304,39 @@ func (pg *PlanetGenerator) selectClimateByStarType(starType string, rng *rand.Ra
 		return &pg.climates[0]
 	}
 	total := 0.0
-	for _, w := range weighted { total += w.weight }
+	for _, w := range weighted {
+		total += w.weight
+	}
 	r := rng.Float64() * total
 	for _, w := range weighted {
 		r -= w.weight
-		if r <= 0 { return w.climate }
+		if r <= 0 {
+			return w.climate
+		}
 	}
 	return weighted[len(weighted)-1].climate
 }
 
 func pickRandom(list []string, rng *rand.Rand) string {
-	if len(list) == 0 { return "" }
+	if len(list) == 0 {
+		return ""
+	}
 	return list[rng.Intn(len(list))]
 }
 
 func (pg *PlanetGenerator) determineVisualType(climate *Climate, surface, hydrosphere string, temperature float64, rng *rand.Rand) string {
-	if surface == "лавовая" { return "lava" }
-	if surface == "ледяная" { return "ice" }
-	if temperature < 200 { return "ice" }
-	if hydrosphere == "океаны" || hydrosphere == "озёра" { return "earth" }
+	if surface == "лавовая" {
+		return "lava"
+	}
+	if surface == "ледяная" {
+		return "ice"
+	}
+	if temperature < 200 {
+		return "ice"
+	}
+	if hydrosphere == "океаны" || hydrosphere == "озёра" {
+		return "earth"
+	}
 	return "rocky"
 }
 
@@ -334,12 +354,18 @@ func (pg *PlanetGenerator) generateTexture(visualType string, size int, rng *ran
 		}
 	}
 	switch visualType {
-	case "rocky": pg.generateRocky(img, size, rng)
-	case "earth": pg.generateEarth(img, size, rng)
-	case "ice":   pg.generateIce(img, size, rng)
-	case "lava":  pg.generateLava(img, size, rng)
-	case "gas":   pg.generateGas(img, size, rng)
-	default:      pg.generateRocky(img, size, rng)
+	case "rocky":
+		pg.generateRocky(img, size, rng)
+	case "earth":
+		pg.generateEarth(img, size, rng)
+	case "ice":
+		pg.generateIce(img, size, rng)
+	case "lava":
+		pg.generateLava(img, size, rng)
+	case "gas":
+		pg.generateGas(img, size, rng)
+	default:
+		pg.generateRocky(img, size, rng)
 	}
 	return img
 }
@@ -354,15 +380,18 @@ func (pg *PlanetGenerator) generateRocky(img *image.RGBA, size int, rng *rand.Ra
 	baseB := uint8(60 + rng.Intn(40))
 
 	craterCount := 3 + rng.Intn(8)
-	type crater struct{ x, y, r float64; depth float64 }
+	type crater struct {
+		x, y, r float64
+		depth   float64
+	}
 	craters := make([]crater, craterCount)
 	for i := 0; i < craterCount; i++ {
 		angle := rng.Float64() * 2 * math.Pi
 		dist := rng.Float64() * radius * 0.8
 		craters[i] = crater{
-			x: cx + math.Cos(angle)*dist,
-			y: cy + math.Sin(angle)*dist,
-			r: 2 + rng.Float64()*6,
+			x:     cx + math.Cos(angle)*dist,
+			y:     cy + math.Sin(angle)*dist,
+			r:     2 + rng.Float64()*6,
 			depth: 0.3 + rng.Float64()*0.5,
 		}
 	}
@@ -371,7 +400,9 @@ func (pg *PlanetGenerator) generateRocky(img *image.RGBA, size int, rng *rand.Ra
 			dx := float64(x) - cx
 			dy := float64(y) - cy
 			dist := math.Sqrt(dx*dx + dy*dy)
-			if dist > radius { continue }
+			if dist > radius {
+				continue
+			}
 			noise1 := math.Sin(float64(x)*0.2+float64(y)*0.3)*10 + math.Cos(float64(x)*0.4-float64(y)*0.5)*8
 			noise2 := math.Sin(float64(x)*0.7+float64(y)*0.9)*5
 			r := float64(baseR) + noise1 + noise2
@@ -396,8 +427,12 @@ func (pg *PlanetGenerator) generateRocky(img *image.RGBA, size int, rng *rand.Ra
 				}
 			}
 			clamp := func(v float64) uint8 {
-				if v < 0 { return 0 }
-				if v > 255 { return 255 }
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
 				return uint8(v)
 			}
 			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
@@ -412,7 +447,10 @@ func (pg *PlanetGenerator) generateEarth(img *image.RGBA, size int, rng *rand.Ra
 	oceanG := uint8(60 + rng.Intn(50))
 	oceanB := uint8(120 + rng.Intn(60))
 
-	type continent struct{ x, y, r float64; color [3]uint8 }
+	type continent struct {
+		x, y, r float64
+		color   [3]uint8
+	}
 	numContinents := 3 + rng.Intn(4)
 	continents := make([]continent, numContinents)
 	for i := 0; i < numContinents; i++ {
@@ -429,16 +467,18 @@ func (pg *PlanetGenerator) generateEarth(img *image.RGBA, size int, rng *rand.Ra
 			},
 		}
 	}
-	type cloud struct{ x, y, r, alpha float64 }
+	type cloud struct {
+		x, y, r, alpha float64
+	}
 	numClouds := 2 + rng.Intn(5)
 	clouds := make([]cloud, numClouds)
 	for i := 0; i < numClouds; i++ {
 		angle := rng.Float64() * 2 * math.Pi
 		dist := rng.Float64() * radius * 0.8
 		clouds[i] = cloud{
-			x: cx + math.Cos(angle)*dist,
-			y: cy + math.Sin(angle)*dist,
-			r: 4 + rng.Float64()*12,
+			x:     cx + math.Cos(angle)*dist,
+			y:     cy + math.Sin(angle)*dist,
+			r:     4 + rng.Float64()*12,
 			alpha: 0.1 + rng.Float64()*0.3,
 		}
 	}
@@ -447,7 +487,9 @@ func (pg *PlanetGenerator) generateEarth(img *image.RGBA, size int, rng *rand.Ra
 			dx := float64(x) - cx
 			dy := float64(y) - cy
 			dist := math.Sqrt(dx*dx + dy*dy)
-			if dist > radius { continue }
+			if dist > radius {
+				continue
+			}
 			r := float64(oceanR)
 			g := float64(oceanG)
 			b := float64(oceanB)
@@ -464,7 +506,9 @@ func (pg *PlanetGenerator) generateEarth(img *image.RGBA, size int, rng *rand.Ra
 				}
 			}
 			noise := math.Sin(float64(x)*0.5+float64(y)*0.7)*5 + math.Cos(float64(x)*0.9-float64(y)*0.3)*4
-			r += noise; g += noise; b += noise
+			r += noise
+			g += noise
+			b += noise
 			for _, cl := range clouds {
 				ddx := float64(x) - cl.x
 				ddy := float64(y) - cl.y
@@ -478,8 +522,12 @@ func (pg *PlanetGenerator) generateEarth(img *image.RGBA, size int, rng *rand.Ra
 				}
 			}
 			clamp := func(v float64) uint8 {
-				if v < 0 { return 0 }
-				if v > 255 { return 255 }
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
 				return uint8(v)
 			}
 			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
@@ -494,7 +542,9 @@ func (pg *PlanetGenerator) generateIce(img *image.RGBA, size int, rng *rand.Rand
 	baseG := uint8(200 + rng.Intn(40))
 	baseB := uint8(220 + rng.Intn(30))
 
-	type crack struct{ x1, y1, x2, y2, width float64 }
+	type crack struct {
+		x1, y1, x2, y2, width float64
+	}
 	crackCount := 5 + rng.Intn(10)
 	cracks := make([]crack, crackCount)
 	for i := 0; i < crackCount; i++ {
@@ -513,22 +563,32 @@ func (pg *PlanetGenerator) generateIce(img *image.RGBA, size int, rng *rand.Rand
 			dx := float64(x) - cx
 			dy := float64(y) - cy
 			dist := math.Sqrt(dx*dx + dy*dy)
-			if dist > radius { continue }
+			if dist > radius {
+				continue
+			}
 			r := float64(baseR)
 			g := float64(baseG)
 			b := float64(baseB)
 			noise := math.Sin(float64(x)*0.3+float64(y)*0.5)*8 + math.Cos(float64(x)*0.7-float64(y)*0.2)*6
-			r += noise; g += noise; b += noise
+			r += noise
+			g += noise
+			b += noise
 			for _, cr := range cracks {
 				dx1 := float64(x) - cr.x1
 				dy1 := float64(y) - cr.y1
 				dx2 := cr.x2 - cr.x1
 				dy2 := cr.y2 - cr.y1
 				len2 := dx2*dx2 + dy2*dy2
-				if len2 == 0 { continue }
+				if len2 == 0 {
+					continue
+				}
 				t := (dx1*dx2 + dy1*dy2) / len2
-				if t < 0 { t = 0 }
-				if t > 1 { t = 1 }
+				if t < 0 {
+					t = 0
+				}
+				if t > 1 {
+					t = 1
+				}
 				projX := cr.x1 + t*dx2
 				projY := cr.y1 + t*dy2
 				d := math.Sqrt((float64(x)-projX)*(float64(x)-projX) + (float64(y)-projY)*(float64(y)-projY))
@@ -541,8 +601,12 @@ func (pg *PlanetGenerator) generateIce(img *image.RGBA, size int, rng *rand.Rand
 				}
 			}
 			clamp := func(v float64) uint8 {
-				if v < 0 { return 0 }
-				if v > 255 { return 255 }
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
 				return uint8(v)
 			}
 			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
@@ -585,7 +649,9 @@ func (pg *PlanetGenerator) generateLava(img *image.RGBA, size int, rng *rand.Ran
 			dx := float64(x) - cx
 			dy := float64(y) - cy
 			dist := math.Sqrt(dx*dx + dy*dy)
-			if dist > radius { continue }
+			if dist > radius {
+				continue
+			}
 			r := float64(baseR)
 			g := float64(baseG)
 			b := float64(baseB)
@@ -598,16 +664,24 @@ func (pg *PlanetGenerator) generateLava(img *image.RGBA, size int, rng *rand.Ran
 					dx2 := p2.x - p1.x
 					dy2 := p2.y - p1.y
 					len2 := dx2*dx2 + dy2*dy2
-					if len2 == 0 { continue }
+					if len2 == 0 {
+						continue
+					}
 					t := (dx1*dx2 + dy1*dy2) / len2
-					if t < 0 { t = 0 }
-					if t > 1 { t = 1 }
+					if t < 0 {
+						t = 0
+					}
+					if t > 1 {
+						t = 1
+					}
 					projX := p1.x + t*dx2
 					projY := p1.y + t*dy2
 					d := math.Sqrt((float64(x)-projX)*(float64(x)-projX) + (float64(y)-projY)*(float64(y)-projY))
 					if d < 2.5 {
 						factor := 1 - d/2.5
-						if factor > lavaGlow { lavaGlow = factor }
+						if factor > lavaGlow {
+							lavaGlow = factor
+						}
 					}
 				}
 			}
@@ -621,10 +695,16 @@ func (pg *PlanetGenerator) generateLava(img *image.RGBA, size int, rng *rand.Ran
 				b = b*(1-mix) + lavaB*mix
 			}
 			noise := math.Sin(float64(x)*0.5+float64(y)*0.6)*5 + math.Cos(float64(x)*0.8-float64(y)*0.4)*4
-			r += noise; g += noise; b += noise
+			r += noise
+			g += noise
+			b += noise
 			clamp := func(v float64) uint8 {
-				if v < 0 { return 0 }
-				if v > 255 { return 255 }
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
 				return uint8(v)
 			}
 			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
@@ -666,11 +746,12 @@ func (pg *PlanetGenerator) generateGas(img *image.RGBA, size int, rng *rand.Rand
 			dx := float64(x) - cx
 			dy := float64(y) - cy
 			dist := math.Sqrt(dx*dx + dy*dy)
-			if dist > radius { continue }
-			// Поворот для полос
+			if dist > radius {
+				continue
+			}
 			xRot := dx*cosA + dy*sinA
 			yRot := -dx*sinA + dy*cosA
-			_ = xRot // не используется, но оставлено
+			_ = xRot // не используется, но нужно для компиляции
 			r, g, b := 40.0, 30.0, 20.0
 			for _, band := range bands {
 				dyBand := yRot - band.pos
@@ -693,8 +774,12 @@ func (pg *PlanetGenerator) generateGas(img *image.RGBA, size int, rng *rand.Rand
 				b = b*(1-factor) + float64(spotColB)*factor
 			}
 			clamp := func(v float64) uint8 {
-				if v < 0 { return 0 }
-				if v > 255 { return 255 }
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
 				return uint8(v)
 			}
 			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
@@ -713,15 +798,29 @@ func hslToRgb(h, s, l int) (uint8, uint8, uint8) {
 	} else {
 		var hue2rgb func(p, q, t float64) float64
 		hue2rgb = func(p, q, t float64) float64 {
-			if t < 0 { t += 1 }
-			if t > 1 { t -= 1 }
-			if t < 1.0/6.0 { return p + (q-p)*6*t }
-			if t < 1.0/2.0 { return q }
-			if t < 2.0/3.0 { return p + (q-p)*(2.0/3.0-t)*6 }
+			if t < 0 {
+				t += 1
+			}
+			if t > 1 {
+				t -= 1
+			}
+			if t < 1.0/6.0 {
+				return p + (q-p)*6*t
+			}
+			if t < 1.0/2.0 {
+				return q
+			}
+			if t < 2.0/3.0 {
+				return p + (q-p)*(2.0/3.0-t)*6
+			}
 			return p
 		}
 		q := 0.0
-		if L < 0.5 { q = L * (1 + S) } else { q = L + S - L*S }
+		if L < 0.5 {
+			q = L * (1 + S)
+		} else {
+			q = L + S - L*S
+		}
 		p := 2*L - q
 		r = hue2rgb(p, q, H+1.0/3.0)
 		g = hue2rgb(p, q, H)
@@ -741,7 +840,9 @@ func (pg *PlanetGenerator) applyPostProcessing(img *image.RGBA, size int, visual
 	atmColor := color.RGBA{100, 150, 255, 50}
 	highlightColor := color.RGBA{255, 255, 255, 230}
 
-	if hasAtmosphere { atmStrength = 0.2 }
+	if hasAtmosphere {
+		atmStrength = 0.2
+	}
 	switch visualType {
 	case "ice":
 		atmColor = color.RGBA{200, 230, 255, 40}
@@ -751,7 +852,9 @@ func (pg *PlanetGenerator) applyPostProcessing(img *image.RGBA, size int, visual
 		atmColor = color.RGBA{255, 100, 50, 60}
 		highlightStrength = 0.2
 		shadowStrength = 0.6
-		if hasAtmosphere { atmStrength = 0.15 }
+		if hasAtmosphere {
+			atmStrength = 0.15
+		}
 	case "earth":
 		atmColor = color.RGBA{70, 150, 255, 50}
 		highlightStrength = 0.3
@@ -785,24 +888,28 @@ func (pg *PlanetGenerator) applyPostProcessing(img *image.RGBA, size int, visual
 				continue
 			}
 			c := img.RGBAAt(x, y)
-			// Свет
 			lightX, lightY, lightZ := -0.5, -0.4, 0.2
 			lenL := math.Sqrt(lightX*lightX + lightY*lightY + lightZ*lightZ)
 			nx, ny, nz := lightX/lenL, lightY/lenL, lightZ/lenL
 			z := math.Sqrt(math.Max(0, radius*radius-dx*dx-dy*dy))
 			normLen := math.Sqrt(dx*dx + dy*dy + z*z)
-			if normLen == 0 { continue }
+			if normLen == 0 {
+				continue
+			}
 			normDx, normDy, normDz := dx/normLen, dy/normLen, z/normLen
 			diffuse := normDx*nx + normDy*ny + normDz*nz
-			if diffuse < 0 { diffuse = 0 }
-			if diffuse > 1 { diffuse = 1 }
+			if diffuse < 0 {
+				diffuse = 0
+			}
+			if diffuse > 1 {
+				diffuse = 1
+			}
 			shadow := 1 - shadowStrength*(1-diffuse)
 			r := float64(c.R) * shadow
 			g := float64(c.G) * shadow
 			b := float64(c.B) * shadow
 
-			// Блик (упрощённо, без reflectX/Y)
-			spec := math.Max(0, 2*diffuse*normDz - nz)
+			spec := math.Max(0, 2*diffuse*normDz-nz)
 			specIntensity := math.Pow(spec, 20) * highlightStrength * 2
 			if specIntensity > 0.01 {
 				hr := float64(highlightColor.R)
@@ -812,7 +919,6 @@ func (pg *PlanetGenerator) applyPostProcessing(img *image.RGBA, size int, visual
 				g = g + (hg-g)*specIntensity
 				b = b + (hb-b)*specIntensity
 			}
-			// Внутренняя атмосфера
 			if hasAtmosphere && atmStrength > 0 && normDist > 0.7 {
 				edge := (normDist - 0.7) / 0.3
 				atmAlpha := atmStrength * edge * 0.8
@@ -824,8 +930,12 @@ func (pg *PlanetGenerator) applyPostProcessing(img *image.RGBA, size int, visual
 				b = b*(1-atmAlpha) + ab*atmAlpha
 			}
 			clamp := func(v float64) uint8 {
-				if v < 0 { return 0 }
-				if v > 255 { return 255 }
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
 				return uint8(v)
 			}
 			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
@@ -856,8 +966,14 @@ func (pg *PlanetGenerator) drawRings(img *image.RGBA, size int, rng *rand.Rand) 
 			if dist >= ringInner && dist <= ringOuter {
 				pos := (dist - ringInner) / (ringOuter - ringInner)
 				fade := 1.0
-				if pos < 0.1 { fade = pos / 0.1 } else if pos > 0.8 { fade = 1 - (pos-0.8)/0.2 }
-				if fade < 0 { fade = 0 }
+				if pos < 0.1 {
+					fade = pos / 0.1
+				} else if pos > 0.8 {
+					fade = 1 - (pos-0.8)/0.2
+				}
+				if fade < 0 {
+					fade = 0
+				}
 				baseColor := color.RGBA{200, 180, 150, uint8(alpha * 255 * fade)}
 				c := img.RGBAAt(x, y)
 				if c.A == 0 {
@@ -883,14 +999,20 @@ func (pg *PlanetGenerator) drawRings(img *image.RGBA, size int, rng *rand.Rand) 
 func (pg *PlanetGenerator) scaleImage(src *image.RGBA, targetRadius int) *image.RGBA {
 	srcSize := src.Bounds().Dx()
 	targetSize := targetRadius * 2
-	if targetSize == srcSize { return src }
+	if targetSize == srcSize {
+		return src
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, targetSize, targetSize))
 	for y := 0; y < targetSize; y++ {
 		for x := 0; x < targetSize; x++ {
 			srcX := int(float64(x) * float64(srcSize) / float64(targetSize))
 			srcY := int(float64(y) * float64(srcSize) / float64(targetSize))
-			if srcX >= srcSize { srcX = srcSize - 1 }
-			if srcY >= srcSize { srcY = srcSize - 1 }
+			if srcX >= srcSize {
+				srcX = srcSize - 1
+			}
+			if srcY >= srcSize {
+				srcY = srcSize - 1
+			}
 			dst.SetRGBA(x, y, src.RGBAAt(srcX, srcY))
 		}
 	}
