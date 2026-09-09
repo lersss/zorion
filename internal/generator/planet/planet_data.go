@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"zorion/internal/generator/resource"
-	"zorion/internal/models"
 	"zorion/internal/names"
 	"zorion/internal/repository"
 )
@@ -241,9 +240,11 @@ func (g *Generator) determinePlanetCount(spectralClass string) int {
 }
 
 func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
-	// Используем физическую температуру (можно заменить на вашу логику)
-	archetype := fallbackArchetype() // или GenerateArchetype(...)
-	props := g.GenerateProperties(archetype, orbitIndex, spectralClass, starTemp)
+	// Используем функцию из archetype.go и properties.go (они уже определены в пакете)
+	// Мы не дублируем их здесь.
+	// Вместо этого вызываем существующие функции:
+	archetype := GenerateArchetype(spectralClass, g.rng)
+	props := GenerateProperties(archetype, orbitIndex, spectralClass, starTemp, g.rng)
 
 	name := names.GeneratePlanetName(g.rng, g.usedNames)
 	if name == "" {
@@ -267,7 +268,6 @@ func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass
 		"description":       generateDescription(g.rng, props.Type, props.Habitable, props.Life),
 		"development_level": props.Development,
 	}
-
 	dataJSON, _ := json.Marshal(data)
 
 	return &PlanetData{
@@ -471,69 +471,6 @@ func generateDescription(rng *rand.Rand, planetType string, habitable, life bool
 	return "Безжизненный и суровый мир."
 }
 
-// ---------- Физические свойства (старая логика) ----------
-type Properties struct {
-	Type          string
-	Size          float64
-	Mass          float64
-	Atmosphere    string
-	Temperature   float64
-	WaterPercent  float64
-	Moons         int
-	Habitable     bool
-	Life          bool
-	Population    int64
-	Political     string
-	ConflictLevel float64
-	Development   float64
-}
-
-type Archetype struct {
-	Surface         string
-	Atmosphere      string
-	TemperatureMin  float64
-	TemperatureMax  float64
-	WaterChance     float64
-	LifeChance      float64
-	SizeMin         float64
-	SizeMax         float64
-	MassMin         float64
-	MassMax         float64
-}
-
-func (g *Generator) GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass string, starTemp int) *Properties {
-	// Здесь вставьте вашу полную логику из старого generator.go (с физикой)
-	// Я даю упрощённую версию, чтобы файл компилировался. Замените на свой код.
-	size := 0.5 + g.rng.Float64()*14.5
-	mass := 0.1 + g.rng.Float64()*19.9
-	temp := 200.0 + g.rng.Float64()*300.0
-	water := g.rng.Float64() * 100
-	life := false
-	if temp > 200 && temp < 350 && water > 10 {
-		life = g.rng.Float64() < 0.4
-	}
-	habitable := life && temp > 200 && temp < 350
-
-	return &Properties{
-		Type:          archetype.Surface,
-		Size:          size,
-		Mass:          mass,
-		Atmosphere:    archetype.Atmosphere,
-		Temperature:   temp,
-		WaterPercent:  water,
-		Moons:         int(size / 5),
-		Habitable:     habitable,
-		Life:          life,
-		Population:    0,
-		Political:     "нет",
-		ConflictLevel: 0,
-		Development:   0,
-	}
-}
-
-func fallbackArchetype() *Archetype {
-	return &Archetype{
-		Surface:    "скалистая",
-		Atmosphere: "азотно-кислородная",
-	}
-}
+// Замечание: функции GenerateArchetype, GenerateProperties, fallbackArchetype
+// и структуры Archetype, Properties определены в других файлах пакета (archetype.go, properties.go).
+// Здесь мы их не дублируем, чтобы избежать конфликтов.
