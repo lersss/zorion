@@ -200,7 +200,6 @@ function renderModal(worldName, spectralClass, planets) {
                 if (modalState.selectedPlanetIndex !== idx) {
                     modalState.selectedPlanetIndex = idx;
                     renderRightPanel(planets, idx);
-                    // Перерисовываем Canvas для подсветки
                     drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
                 }
             }
@@ -260,19 +259,71 @@ function renderRightPanel(planets, selectedIndex) {
             tbody.appendChild(tr);
         }
     } else {
-        // ---- РЕЖИМ КАРТОЧКИ ----
+        // ---- РЕЖИМ КАРТОЧКИ С ВКЛАДКАМИ ----
         const planet = planets[selectedIndex];
         if (!planet) {
             renderRightPanel(planets, null);
             return;
         }
 
+        // Активная вкладка (по умолчанию 'general')
+        let activeTab = 'general';
+
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <h3 style="margin: 0; font-size: 1rem; color: #aaa;">Планета #${selectedIndex + 1}</h3>
                 <button id="back-to-list-btn" style="background: #2a2a4a; border: none; color: #aaa; padding: 4px 12px; border-radius: 4px; cursor: pointer;">← Назад</button>
             </div>
-            <div style="font-size: 0.85rem; line-height: 1.6;">
+            <div style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid #333; padding-bottom: 8px;">
+                <button class="tab-btn" data-tab="general" style="background: none; border: none; color: #888; padding: 4px 12px; cursor: pointer; font-size: 0.8rem; border-radius: 4px;">Общее</button>
+                <button class="tab-btn" data-tab="resources" style="background: none; border: none; color: #888; padding: 4px 12px; cursor: pointer; font-size: 0.8rem; border-radius: 4px;">Ресурсы</button>
+                <button class="tab-btn" data-tab="settlements" style="background: none; border: none; color: #888; padding: 4px 12px; cursor: pointer; font-size: 0.8rem; border-radius: 4px;">Поселения</button>
+                <button class="tab-btn" data-tab="factions" style="background: none; border: none; color: #888; padding: 4px 12px; cursor: pointer; font-size: 0.8rem; border-radius: 4px;">Фракции</button>
+            </div>
+            <div id="tab-content" style="font-size: 0.85rem; line-height: 1.6;"></div>
+        `;
+
+        // Переключение вкладок
+        const tabBtns = panel.querySelectorAll('.tab-btn');
+        const tabContent = panel.querySelector('#tab-content');
+
+        function switchTab(tab) {
+            activeTab = tab;
+            tabBtns.forEach(btn => {
+                btn.style.color = btn.dataset.tab === tab ? '#fff' : '#888';
+                btn.style.background = btn.dataset.tab === tab ? '#2a2a4a' : 'none';
+            });
+            renderTabContent(tab, planet, tabContent);
+        }
+
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                switchTab(btn.dataset.tab);
+            });
+        });
+
+        // Первоначальная активация
+        switchTab('general');
+
+        // Кнопка «Назад»
+        const backBtn = panel.querySelector('#back-to-list-btn');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => {
+                modalState.selectedPlanetIndex = null;
+                renderRightPanel(planets, null);
+                const canvas = document.getElementById('system-canvas');
+                if (canvas) {
+                    drawSystem(canvas, modalState.spectralClass, planets, modalState.starRadius, modalState.starColor, modalState.canvasWidth, modalState.canvasHeight);
+                }
+            });
+        }
+    }
+}
+
+function renderTabContent(tab, planet, container) {
+    switch (tab) {
+        case 'general':
+            container.innerHTML = `
                 <p><strong>Название:</strong> ${planet.name || '—'}</p>
                 <p><strong>Тип:</strong> ${planet.type || '—'}</p>
                 <p><strong>Размер:</strong> ${planet.size ? planet.size.toFixed(2) : '—'}</p>
@@ -283,21 +334,60 @@ function renderRightPanel(planets, selectedIndex) {
                 <p><strong>Обитаемость:</strong> ${planet.habitable ? 'Да' : 'Нет'}</p>
                 <p><strong>Жизнь:</strong> ${planet.life ? 'Да' : 'Нет'}</p>
                 <p><strong>Население:</strong> ${planet.population ? planet.population.toLocaleString() : '—'}</p>
-            </div>
-        `;
+            `;
+            break;
 
-        const backBtn = panel.querySelector('#back-to-list-btn');
-        if (backBtn) {
-            backBtn.addEventListener('click', () => {
-                modalState.selectedPlanetIndex = null;
-                renderRightPanel(planets, null);
-                // Перерисовываем Canvas для снятия подсветки
-                const canvas = document.getElementById('system-canvas');
-                if (canvas) {
-                    drawSystem(canvas, modalState.spectralClass, planets, modalState.starRadius, modalState.starColor, modalState.canvasWidth, modalState.canvasHeight);
+        case 'resources':
+            let html = '';
+            if (planet.resources && typeof planet.resources === 'object') {
+                const categories = Object.keys(planet.resources);
+                if (categories.length > 0) {
+                    html = '<p><strong>Ресурсы:</strong></p><ul style="list-style: none; padding: 0;">';
+                    categories.forEach(cat => {
+                        const val = planet.resources[cat];
+                        if (typeof val === 'number') {
+                            const percent = (val * 100).toFixed(0);
+                            html += `
+                                <li style="margin-bottom: 6px;">
+                                    <span style="display: inline-block; width: 80px;">${cat}:</span>
+                                    <div style="display: inline-block; width: 100px; height: 8px; background: #333; border-radius: 4px; overflow: hidden; vertical-align: middle;">
+                                        <div style="width: ${percent}%; height: 100%; background: #4a9eff; border-radius: 4px;"></div>
+                                    </div>
+                                    <span style="margin-left: 8px; font-size: 0.7rem; color: #888;">${percent}%</span>
+                                </li>
+                            `;
+                        }
+                    });
+                    html += '</ul>';
+                } else {
+                    html = '<p style="color: #666;">Нет данных о ресурсах</p>';
                 }
-            });
-        }
+            } else {
+                html = '<p style="color: #666;">Нет данных о ресурсах</p>';
+            }
+            container.innerHTML = html;
+            break;
+
+        case 'settlements':
+            container.innerHTML = `
+                <p style="color: #666; text-align: center; padding: 20px 0;">
+                    🏗️ Данные о поселениях будут доступны позже<br>
+                    <span style="font-size: 0.7rem;">(после реализации экономической симуляции)</span>
+                </p>
+            `;
+            break;
+
+        case 'factions':
+            container.innerHTML = `
+                <p style="color: #666; text-align: center; padding: 20px 0;">
+                    🏛️ Данные о фракциях будут доступны позже<br>
+                    <span style="font-size: 0.7rem;">(после реализации генерации фракций)</span>
+                </p>
+            `;
+            break;
+
+        default:
+            container.innerHTML = '<p style="color: #666;">Неизвестная вкладка</p>';
     }
 }
 
@@ -305,7 +395,6 @@ function closeModal() {
     const overlay = document.getElementById('system-modal-overlay');
     if (overlay) overlay.remove();
     resetState();
-    // Удаляем глобальную функцию
     delete window.updateRightPanel;
 }
 
