@@ -36,58 +36,20 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 	}
 
 	// 3. Эффективная температура планеты (без атмосферы)
-	// T_eff = T_star * (1 / (r^2 * L))^0.25
-	// Упрощённо: sqrt(sqrt(1.0 / (r^2 * L)))
 	ratio := 1.0 / (orbitRadius * orbitRadius * luminosity)
 	effectiveTemp := float64(starTemp) * math.Sqrt(math.Sqrt(ratio))
 	if effectiveTemp < 10 {
-		effectiveTemp = 10 // минимальная температура
+		effectiveTemp = 10
 	}
 
-	// 4. Выбор климата на основе эффективной температуры
-	var climateID string
-	switch {
-	case effectiveTemp > 500:
-		climateID = "hot"
-	case effectiveTemp > 250:
-		climateID = "temperate"
-	case effectiveTemp > 150:
-		climateID = "cold"
-	default:
-		climateID = "extreme"
-	}
-	// Если температура близка к границе, иногда выбираем "variable"
-	if effectiveTemp > 230 && effectiveTemp < 270 && rng.Float64() < 0.3 {
-		climateID = "variable"
-	}
-
-	// 5. Если переданный archetype уже содержит климат, но он может не совпадать с effectiveTemp,
-	// мы всё равно используем effectiveTemp для выбора климата (переопределяем).
-	// В новой логике мы не используем archetype для выбора климата, только для черт.
-	// Но у нас archetype уже содержит климат. Чтобы не ломать старую логику, мы создадим новый Archetype
-	// на основе effectiveTemp и разрешённых списков из конфига.
-	// Для этого нужно получить ClimateConfig по climateID из загруженного конфига.
-	// Это проще сделать в generatePlanet, но я покажу, как адаптировать здесь.
-
-	// Вместо этого мы будем использовать archetype только для черт, но климат переопределим.
-	// Для простоты я создам fallback-архетип на основе effectiveTemp, но у нас уже есть archetype с чертами.
-	// В данном случае мы можем просто скорректировать температуру и воду, а климат оставить как есть.
-	// Но это не совсем физично. Поэтому я предлагаю переделать generatePlanet так, чтобы он вызывал новую функцию,
-	// которая выбирает климат по температуре, а архетип получает только черты.
-	// Однако, чтобы не переписывать всю структуру, я оставлю старую логику с архетипом, но скорректирую
-	// физику на основе effectiveTemp.
-
-	// Итак, мы будем использовать эффективную температуру как основу, а архетип (черты) как дополнение.
-	// В результате температура будет определяться эффективной температурой (с небольшим разбросом).
-
-	// Базовые параметры из архетипа
+	// 4. Базовые параметры из архетипа
 	size := archetype.SizeMin + rng.Float64()*(archetype.SizeMax-archetype.SizeMin)
 	mass := archetype.MassMin + rng.Float64()*(archetype.MassMax-archetype.MassMin)
 
-	// Температура: берём effectiveTemp, но добавляем случайный разброс ±10%
+	// 5. Температура: effectiveTemp с разбросом ±10%
 	temp := effectiveTemp * (0.9 + rng.Float64()*0.2)
 
-	// Ограничиваем температуру диапазоном архетипа (если архетип имеет ограничения)
+	// Ограничиваем диапазоном архетипа
 	if temp < archetype.TemperatureMin {
 		temp = archetype.TemperatureMin
 	}
@@ -95,10 +57,9 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 		temp = archetype.TemperatureMax
 	}
 
-	// Вода: зависит от температуры и климата
+	// 6. Вода
 	waterPercent := 0.0
 	if archetype.Hydrosphere != "сухая" && archetype.Hydrosphere != "кислотная" {
-		// Вероятность воды зависит от температуры: 0°C < T < 100°C -> больше воды
 		if temp > 250 && temp < 400 {
 			if rng.Float64() < archetype.WaterChance {
 				waterPercent = 30 + rng.Float64()*60
@@ -114,17 +75,18 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 		}
 	}
 	// Переопределяем для конкретных гидросфер
-	if archetype.Hydrosphere == "океаны" {
+	switch archetype.Hydrosphere {
+	case "океаны":
 		waterPercent = 70 + rng.Float64()*25
-	} else if archetype.Hydrosphere == "озёра" {
+	case "озёра":
 		waterPercent = 20 + rng.Float64()*40
-	} else if archetype.Hydrosphere == "ледяной покров" {
+	case "ледяной покров":
 		waterPercent = 5 + rng.Float64()*20
-	} else if archetype.Hydrosphere == "подлёдная" {
+	case "подлёдная":
 		waterPercent = 50 + rng.Float64()*40
 	}
 
-	// Жизнь: зависит от температуры, воды и биосферы
+	// 7. Жизнь
 	life := false
 	if archetype.Biosphere != "стерильная" && waterPercent > 10 && temp > 200 && temp < 400 {
 		if rng.Float64() < archetype.LifeChance {
@@ -132,17 +94,16 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 		}
 	}
 
-	// Обитаемость
+	// 8. Обитаемость
 	habitable := false
 	if life && waterPercent > 10 && temp > 200 && temp < 350 && archetype.Atmosphere != "ядовитая" {
 		habitable = true
 	}
 
-	// Атмосфера
+	// 9. Атмосфера (из архетипа)
 	atmosphere := archetype.Atmosphere
-	// Если температура очень высокая, атмосфера может быть плотнее, но оставим как есть
 
-	// Спутники
+	// 10. Спутники
 	moons := 0
 	switch archetype.Surface {
 	case "скалистая", "песчаная", "глинистая", "стеклянная":
@@ -153,7 +114,7 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 		moons = 0
 	}
 
-	// Население
+	// 11. Население
 	var population int64 = 0
 	if life && habitable {
 		basePop := int64(1000000 + rng.Float64()*999000000)
@@ -161,20 +122,20 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 		population = int64(float64(basePop) * dev)
 	}
 
-	// Политика
+	// 12. Политика
 	political := "нет"
 	if population > 0 {
 		systems := []string{"демократия", "диктатура", "теократия", "корпоратократия", "анархия", "ИИ-управление"}
 		political = systems[rng.Intn(len(systems))]
 	}
 
-	// Конфликт
+	// 13. Конфликт
 	conflict := 0.0
 	if population > 0 {
 		conflict = rng.Float64()
 	}
 
-	// Развитие
+	// 14. Развитие
 	devLevel := 0.0
 	if population > 0 {
 		devLevel = 0.1 + rng.Float64()*0.9
