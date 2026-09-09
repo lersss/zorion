@@ -1,4 +1,4 @@
-import '../js/modal.js';
+import { openSystemModal } from './modal/index.js';
 import { state, elements } from './map/config.js';
 import { resizeCanvas } from './map/render.js';
 import { loadData } from './map/data.js';
