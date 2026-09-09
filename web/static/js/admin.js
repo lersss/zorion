@@ -85,8 +85,8 @@ export function renderPlanetStats(stats, container) {
     html += `<div class="stat-card"><strong>Среднее население:</strong> ${stats.avg_population.toLocaleString()}</div>`;
     html += `</div>`;
 
-    // Типы планет (сортировка по клику)
-    html += `<h3 style="margin-top:20px;">Распределение по типам</h3>`;
+    // Типы планет (поверхности)
+    html += `<h3 style="margin-top:20px;">Распределение по типам поверхностей</h3>`;
     html += `<table class="stats-table" id="type-table">
         <thead><tr>
             <th class="sortable" data-sort="type" data-order="asc">Тип</th>
@@ -95,7 +95,17 @@ export function renderPlanetStats(stats, container) {
         <tbody id="type-body"></tbody>
     </table>`;
 
-    // По спектральным классам (сортировка по клику)
+    // Геймдизайнерские типы (новая таблица)
+    html += `<h3 style="margin-top:20px;">Геймдизайнерские типы планет</h3>`;
+    html += `<table class="stats-table" id="gd-table">
+        <thead><tr>
+            <th class="sortable" data-sort="gdtype" data-order="asc">Тип</th>
+            <th class="sortable" data-sort="gdcount" data-order="asc">Кол-во</th>
+        </tr></thead>
+        <tbody id="gd-body"></tbody>
+    </table>`;
+
+    // По спектральным классам
     html += `<h3 style="margin-top:20px;">По спектральным классам</h3>`;
     html += `<table class="stats-table" id="spectral-table">
         <thead><tr>
@@ -121,13 +131,21 @@ export function renderPlanetStats(stats, container) {
 
     container.innerHTML = html;
 
-    // Заполняем таблицу типов
+    // --- Заполнение таблиц ---
+
+    // 1. Типы поверхностей
     const typeBody = document.getElementById('type-body');
     let typeData = Object.entries(stats.planets_by_type).map(([type, count]) => ({ type, count }));
     typeData.sort((a, b) => b.count - a.count);
     typeBody.innerHTML = typeData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
 
-    // Заполняем спектральную таблицу
+    // 2. Геймдизайнерские типы
+    const gdBody = document.getElementById('gd-body');
+    let gdData = Object.entries(stats.game_design_types || {}).map(([type, count]) => ({ type, count }));
+    gdData.sort((a, b) => b.count - a.count);
+    gdBody.innerHTML = gdData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
+
+    // 3. Спектральные классы
     const spectralBody = document.getElementById('spectral-body');
     let spectralData = Object.entries(stats.planets_by_spectral).map(([spec, types]) => {
         const total = Object.values(types).reduce((sum, v) => sum + v, 0);
@@ -137,7 +155,9 @@ export function renderPlanetStats(stats, container) {
     spectralData.sort((a, b) => b.total - a.total);
     spectralBody.innerHTML = spectralData.map(d => `<tr><td>${d.spec}</td><td>${d.typesStr}</td><td>${d.total}</td></tr>`).join('');
 
-    // Добавляем обработчики кликов для сортировки таблиц
+    // --- Обработчики сортировки ---
+
+    // Для таблицы поверхностей
     document.querySelectorAll('#type-table .sortable').forEach(th => {
         th.addEventListener('click', function() {
             const sortKey = this.dataset.sort;
@@ -169,6 +189,39 @@ export function renderPlanetStats(stats, container) {
         });
     });
 
+    // Для геймдизайнерских типов
+    document.querySelectorAll('#gd-table .sortable').forEach(th => {
+        th.addEventListener('click', function() {
+            const sortKey = this.dataset.sort;
+            const currentOrder = this.dataset.order;
+            const newOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            this.dataset.order = newOrder;
+            const tbody = document.getElementById('gd-body');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort((a, b) => {
+                let valA, valB;
+                if (sortKey === 'gdtype') {
+                    valA = a.cells[0].textContent;
+                    valB = b.cells[0].textContent;
+                } else {
+                    valA = parseInt(a.cells[1].textContent);
+                    valB = parseInt(b.cells[1].textContent);
+                }
+                if (typeof valA === 'string') {
+                    return newOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                } else {
+                    return newOrder === 'asc' ? valA - valB : valB - valA;
+                }
+            });
+            rows.forEach(row => tbody.appendChild(row));
+            document.querySelectorAll('#gd-table .sortable').forEach(th => {
+                th.textContent = th.textContent.replace(/ [▲▼]/, '');
+            });
+            this.textContent += newOrder === 'asc' ? ' ▲' : ' ▼';
+        });
+    });
+
+    // Для спектральной таблицы
     document.querySelectorAll('#spectral-table .sortable').forEach(th => {
         th.addEventListener('click', function() {
             const sortKey = this.dataset.sort;

@@ -1,4 +1,3 @@
-// internal/handlers/admin_stats.go
 package handlers
 
 import (
@@ -14,6 +13,7 @@ type PlanetStats struct {
 	TotalPlanets      int                      `json:"total_planets"`
 	PlanetsByType     map[string]int           `json:"planets_by_type"`
 	PlanetsBySpectral map[string]map[string]int `json:"planets_by_spectral"`
+	GameDesignTypes   map[string]int           `json:"game_design_types"` // новый раздел
 	HabitableCount    int                      `json:"habitable_count"`
 	LifeCount         int                      `json:"life_count"`
 	AvgSize           float64                  `json:"avg_size"`
@@ -48,6 +48,7 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	stats := &PlanetStats{
 		PlanetsByType:      make(map[string]int),
 		PlanetsBySpectral:  make(map[string]map[string]int),
+		GameDesignTypes:    make(map[string]int),
 		Anomalies:          []Anomaly{},
 	}
 
@@ -61,11 +62,12 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	}
 	defer rows.Close()
 
-	worlds := []struct {
+	type WorldInfo struct {
 		ID            string
 		SpectralClass string
 		Temperature   int
-	}{}
+	}
+	worlds := []WorldInfo{}
 	for rows.Next() {
 		var w struct {
 			ID            string
@@ -77,11 +79,7 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		if err := rows.Scan(&w.ID, &w.CoordX, &w.CoordY, &w.SpectralClass, &w.Temperature); err != nil {
 			continue
 		}
-		worlds = append(worlds, struct {
-			ID            string
-			SpectralClass string
-			Temperature   int
-		}{ID: w.ID, SpectralClass: w.SpectralClass, Temperature: w.Temperature})
+		worlds = append(worlds, WorldInfo{ID: w.ID, SpectralClass: w.SpectralClass, Temperature: w.Temperature})
 	}
 	stats.TotalWorlds = len(worlds)
 
@@ -95,10 +93,11 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	}
 	defer planetRows.Close()
 
-	var planets []struct {
+	type PlanetData struct {
 		WorldID string
 		Data    map[string]interface{}
 	}
+	planets := []PlanetData{}
 	for planetRows.Next() {
 		var worldID string
 		var dataJSON []byte
@@ -109,10 +108,7 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		if err := json.Unmarshal(dataJSON, &data); err != nil {
 			continue
 		}
-		planets = append(planets, struct {
-			WorldID string
-			Data    map[string]interface{}
-		}{WorldID: worldID, Data: data})
+		planets = append(planets, PlanetData{WorldID: worldID, Data: data})
 	}
 	stats.TotalPlanets = len(planets)
 
@@ -125,8 +121,9 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	for _, p := range planets {
 		worldsWithPlanets[p.WorldID] = true
 
-		// Тип планеты
-		if pType, ok := p.Data["type"].(string); ok {
+		// --- Поверхность (type) ---
+		pType := getString(p.Data, "type")
+		if pType != "" {
 			stats.PlanetsByType[pType]++
 			// По спектральному классу
 			spectral := ""
@@ -144,16 +141,27 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 			}
 		}
 
-		// Жизнь
-		if life, ok := p.Data["life"].(bool); ok && life {
+		// --- Геймдизайнерский тип ---
+		surface := pType // type = surface
+		hydrosphere := getString(p.Data, "hydrosphere")
+		atmosphere := getString(p.Data, "atmosphere")
+		temperature := getFloat(p.Data, "temperature")
+		waterPercent := getFloat(p.Data, "water_percent")
+		habitable := getBool(p.Data, "habitable")
+		life := getBool(p.Data, "life")
+
+		gdType := classifyGameDesignType(surface, hydrosphere, atmosphere, temperature, waterPercent, habitable, life)
+		stats.GameDesignTypes[gdType]++
+
+		// --- Жизнь и обитаемость ---
+		if life {
 			stats.LifeCount++
 		}
-		// Обитаемость
-		if habitable, ok := p.Data["habitable"].(bool); ok && habitable {
+		if habitable {
 			stats.HabitableCount++
 		}
 
-		// Средние значения
+		// --- Средние значения ---
 		if size, ok := p.Data["size"].(float64); ok {
 			totalSize += size
 			sizeCount++
@@ -215,22 +223,22 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		"скалистая":       0.15,
 	}
 	if stats.TotalPlanets > 0 {
-		for pType, count := range stats.PlanetsByType {
-			expected := float64(stats.TotalPlanets) * expectedTypes[pType]
+		for gdType, count := range stats.GameDesignTypes {
+			expected := float64(stats.TotalPlanets) * expectedTypes[gdType]
 			if expected > 0 {
 				ratio := float64(count) / expected
 				if ratio > 1.5 {
 					stats.Anomalies = append(stats.Anomalies, Anomaly{
-						Type:        "planet_type",
-						Description: "Слишком много планет типа " + pType,
+						Type:        "game_design_type",
+						Description: "Слишком много планет типа " + gdType,
 						Value:       float64(count),
 						Expected:    expected,
 						Severity:    "medium",
 					})
 				} else if ratio < 0.5 {
 					stats.Anomalies = append(stats.Anomalies, Anomaly{
-						Type:        "planet_type",
-						Description: "Слишком мало планет типа " + pType,
+						Type:        "game_design_type",
+						Description: "Слишком мало планет типа " + gdType,
 						Value:       float64(count),
 						Expected:    expected,
 						Severity:    "medium",
@@ -241,4 +249,68 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	}
 
 	return stats, nil
+}
+
+// --- Вспомогательные функции для извлечения данных ---
+func getString(data map[string]interface{}, key string) string {
+	if val, ok := data[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
+func getFloat(data map[string]interface{}, key string) float64 {
+	if val, ok := data[key].(float64); ok {
+		return val
+	}
+	return 0
+}
+
+func getBool(data map[string]interface{}, key string) bool {
+	if val, ok := data[key].(bool); ok {
+		return val
+	}
+	return false
+}
+
+// classifyGameDesignType классифицирует планету по геймдизайнерским типам
+func classifyGameDesignType(surface, hydrosphere, atmosphere string, temperature, waterPercent float64, habitable, life bool) string {
+	// Газовый гигант
+	if surface == "газовый гигант" {
+		return "газовый гигант"
+	}
+	// Вулканическая
+	if surface == "вулканическая" || surface == "лавовая" {
+		return "вулканическая"
+	}
+	// Ледяная
+	if surface == "ледяная" || temperature < 200 {
+		return "ледяная"
+	}
+	// Пустынная
+	if surface == "пустынная" || (surface == "песчаная" && waterPercent < 20) {
+		return "пустынная"
+	}
+	// Океаническая
+	if (surface == "песчаная" || surface == "глинистая") && hydrosphere == "океаны" {
+		return "океаническая"
+	}
+	// Землеподобная
+	if surface == "скалистая" && hydrosphere == "океаны" && habitable && life {
+		return "землеподобная"
+	}
+	// Реголитовая
+	if surface == "реголитовая" {
+		return "реголитовая"
+	}
+	// Органик (если поверхность органик, но не подошла под другие)
+	if surface == "органик" {
+		return "органик"
+	}
+	// Металлическая
+	if surface == "металлическая" {
+		return "металлическая"
+	}
+	// По умолчанию — скалистая
+	return "скалистая"
 }
