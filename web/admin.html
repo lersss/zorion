@@ -5,120 +5,228 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Админка Zorion</title>
     <link rel="stylesheet" href="/static/css/admin.css">
+    <style>
+        /* Стили для вкладок */
+        .admin-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid #1e293b;
+            padding-bottom: 4px;
+            flex-wrap: wrap;
+        }
+        .admin-tabs button {
+            background: none;
+            border: none;
+            padding: 8px 16px;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-radius: 4px 4px 0 0;
+            transition: background 0.2s, color 0.2s;
+        }
+        .admin-tabs button:hover {
+            background: #1e293b;
+            color: #e0e0e0;
+        }
+        .admin-tabs button.active {
+            background: #1e293b;
+            color: #f1f5f9;
+            border-bottom: 2px solid #4a9eff;
+        }
+        .tab-pane {
+            display: none;
+        }
+        .tab-pane.active {
+            display: block;
+        }
+
+        /* Стили для статистики */
+        .stat-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .stat-card {
+            background: #1a1a2e;
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid #2a2a4a;
+            font-size: 0.85rem;
+            color: #e0e0e0;
+        }
+        .stat-card strong {
+            color: #94a3b8;
+        }
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 0.85rem;
+        }
+        .stats-table th {
+            text-align: left;
+            color: #94a3b8;
+            border-bottom: 1px solid #1e293b;
+            padding: 6px 8px;
+        }
+        .stats-table td {
+            padding: 6px 8px;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .anomaly-high { color: #f87171; }
+        .anomaly-medium { color: #fbbf24; }
+        .anomaly-low { color: #fcd34d; }
+        .btn-small {
+            padding: 2px 10px;
+            font-size: 0.75rem;
+            background: #334155;
+            border: none;
+            color: #e0e0e0;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-small:hover { background: #475569; }
+    </style>
 </head>
 <body>
 <div class="container">
     <h1>🌍 Админка Zorion</h1>
 
-    <!-- Статистика -->
-    <div class="card">
-        <div class="compact-row" style="gap: 1rem;">
-            <div class="stat-item">Миры: <span id="statsWorlds">—</span></div>
-            <div class="stat-item">Планеты: <span id="statsPlanets">—</span></div>
-            <button class="btn secondary" onclick="loadStats()">Обновить</button>
+    <!-- Вкладки -->
+    <div class="admin-tabs">
+        <button class="tab-btn active" data-tab="tab-main">Основное</button>
+        <button class="tab-btn" data-tab="tab-stats">📊 Статистика</button>
+        <button class="tab-btn" data-tab="tab-worlds">🌍 Миры</button>
+    </div>
+
+    <!-- Вкладка: Основное (все старые карточки) -->
+    <div id="tab-main" class="tab-pane active">
+        <!-- Статистика (краткая) -->
+        <div class="card">
+            <div class="compact-row" style="gap: 1rem;">
+                <div class="stat-item">Миры: <span id="statsWorlds">—</span></div>
+                <div class="stat-item">Планеты: <span id="statsPlanets">—</span></div>
+                <button class="btn secondary" onclick="loadStats()">Обновить</button>
+            </div>
+        </div>
+
+        <!-- Пароль -->
+        <div class="card">
+            <div class="password-form">
+                <label style="color:#94a3b8; font-size:0.85rem;">Пароль администратора:</label>
+                <input type="password" id="adminPassword" placeholder="Введите пароль">
+                <button class="btn" onclick="setPassword()">Сохранить</button>
+            </div>
+        </div>
+
+        <!-- Создание мира -->
+        <div class="card">
+            <h2>➕ Создать мир</h2>
+            <div class="compact-row">
+                <div><label>Название</label><input type="text" id="worldName" placeholder="Название"></div>
+                <div><label>X</label><input type="number" id="coordX" placeholder="0"></div>
+                <div><label>Y</label><input type="number" id="coordY" placeholder="0"></div>
+                <button class="btn" onclick="createWorld()">Создать</button>
+            </div>
+            <div id="createResult" class="result"></div>
+        </div>
+
+        <!-- Генерация вселенной -->
+        <div class="card">
+            <h2>🌌 Генерация вселенной</h2>
+            <div class="compact-row">
+                <div><label>Миры</label><input type="number" id="genWorlds" value="1000"></div>
+                <div><label>Кластеры</label><input type="number" id="genClusters" value="20"></div>
+                <div><label>MapSize</label><input type="number" id="genMapSize" value="8000" step="10"></div>
+                <div><label>minDist</label><input type="number" id="genMinDist" value="150" step="1"></div>
+                <div><label>Радиус кластера</label><input type="number" id="genClusterRadius" value="1200" step="5"></div>
+                <div><label>Расст. между кластерами</label><input type="number" id="genClusterSpacing" value="200" step="10"></div>
+                <div><label>Выбросы %</label><input type="number" id="genOutlierPercent" value="30" step="1"></div>
+                <button class="btn success" onclick="generateUniverse()">Сгенерировать</button>
+                <button class="btn danger" onclick="cancelGeneration('generate_universe')" id="cancelUniverseBtn" style="display:none;">Остановить</button>
+            </div>
+            <div id="genResult" class="result"></div>
+            <div id="genProgress" class="progress-container">
+                <span class="progress-text" id="genProgressText">0 из 0</span>
+                <progress id="genProgressBar" class="progress-bar" value="0" max="100"></progress>
+            </div>
+        </div>
+
+        <!-- Генерация планет -->
+        <div class="card">
+            <h2>🌍 Генерация планет</h2>
+            <div class="compact-row">
+                <button class="btn success" onclick="generatePlanets()">Сгенерировать планеты</button>
+                <button class="btn danger" onclick="cancelGeneration('generate_planets')" id="cancelPlanetsBtn" style="display:none;">Остановить</button>
+            </div>
+            <div id="planetResult" class="result"></div>
+            <div id="planetProgress" class="progress-container">
+                <span class="progress-text" id="planetProgressText">0 из 0</span>
+                <progress id="planetProgressBar" class="progress-bar" value="0" max="100"></progress>
+            </div>
+        </div>
+
+        <!-- Генерация фракций -->
+        <div class="card">
+            <h2>🏛️ Генерация фракций</h2>
+            <div class="compact-row">
+                <button class="btn success" onclick="generateFactions()">Сгенерировать фракции</button>
+                <button class="btn danger" onclick="cancelGeneration('generate_factions')" id="cancelFactionsBtn" style="display:none;">Остановить</button>
+            </div>
+            <div id="factionResult" class="result"></div>
+            <div id="factionProgress" class="progress-container">
+                <span class="progress-text" id="factionProgressText">0 из 0</span>
+                <progress id="factionProgressBar" class="progress-bar" value="0" max="100"></progress>
+            </div>
+        </div>
+
+        <!-- Очистка -->
+        <div class="card">
+            <h2>🗑️ Очистка вселенной</h2>
+            <button class="btn danger" onclick="clearUniverse()">Удалить все миры</button>
+            <div id="clearResult" class="result"></div>
         </div>
     </div>
 
-    <!-- Пароль -->
-    <div class="card">
-        <div class="password-form">
-            <label style="color:#94a3b8; font-size:0.85rem;">Пароль администратора:</label>
-            <input type="password" id="adminPassword" placeholder="Введите пароль">
-            <button class="btn" onclick="setPassword()">Сохранить</button>
+    <!-- Вкладка: Статистика планет (новая) -->
+    <div id="tab-stats" class="tab-pane">
+        <div class="card">
+            <h2>📊 Детальная статистика планет</h2>
+            <button class="btn" onclick="loadPlanetStats()">🔄 Обновить</button>
+            <div id="planetStatsContainer">
+                <p style="color:#94a3b8; margin-top:10px;">Нажмите «Обновить» для загрузки статистики.</p>
+            </div>
         </div>
     </div>
 
-    <!-- Создание мира -->
-    <div class="card">
-        <h2>➕ Создать мир</h2>
-        <div class="compact-row">
-            <div><label>Название</label><input type="text" id="worldName" placeholder="Название"></div>
-            <div><label>X</label><input type="number" id="coordX" placeholder="0"></div>
-            <div><label>Y</label><input type="number" id="coordY" placeholder="0"></div>
-            <button class="btn" onclick="createWorld()">Создать</button>
-        </div>
-        <div id="createResult" class="result"></div>
-    </div>
-
-    <!-- Генерация вселенной -->
-    <div class="card">
-        <h2>🌌 Генерация вселенной</h2>
-        <div class="compact-row">
-            <div><label>Миры</label><input type="number" id="genWorlds" value="1000"></div>
-            <div><label>Кластеры</label><input type="number" id="genClusters" value="20"></div>
-            <div><label>MapSize</label><input type="number" id="genMapSize" value="8000" step="10"></div>
-            <div><label>minDist</label><input type="number" id="genMinDist" value="150" step="1"></div>
-            <div><label>Радиус кластера</label><input type="number" id="genClusterRadius" value="1200" step="5"></div>
-            <div><label>Расст. между кластерами</label><input type="number" id="genClusterSpacing" value="200" step="10"></div>
-            <div><label>Выбросы %</label><input type="number" id="genOutlierPercent" value="30" step="1"></div>
-            <button class="btn success" onclick="generateUniverse()">Сгенерировать</button>
-            <button class="btn danger" onclick="cancelGeneration('generate_universe')" id="cancelUniverseBtn" style="display:none;">Остановить</button>
-        </div>
-        <div id="genResult" class="result"></div>
-        <div id="genProgress" class="progress-container">
-            <span class="progress-text" id="genProgressText">0 из 0</span>
-            <progress id="genProgressBar" class="progress-bar" value="0" max="100"></progress>
+    <!-- Вкладка: Миры (список) -->
+    <div id="tab-worlds" class="tab-pane">
+        <div class="card">
+            <h2>🌍 Список миров</h2>
+            <div class="search-form">
+                <input type="text" id="searchInput" placeholder="Поиск по названию..." onchange="loadWorlds(1)">
+                <button class="btn" onclick="loadWorlds(1)">Поиск</button>
+                <select id="limitSelect" onchange="loadWorlds(1)">
+                    <option value="20">20</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                </select>
+                <label style="color:#94a3b8; font-size:0.8rem;">записей</label>
+            </div>
+            <div id="worldsContainer">
+                <table>
+                    <thead><tr><th>ID</th><th>Название</th><th>X</th><th>Y</th><th>Действие</th></tr></thead>
+                    <tbody id="worldsBody">
+                        <tr><td colspan="5" style="text-align:center;color:#94a3b8;">Загрузка...</td></tr>
+                    </tbody>
+                </table>
+                <div class="pagination" id="paginationControls"></div>
+            </div>
         </div>
     </div>
 
-    <!-- Генерация планет -->
-    <div class="card">
-        <h2>🌍 Генерация планет</h2>
-        <div class="compact-row">
-            <button class="btn success" onclick="generatePlanets()">Сгенерировать планеты</button>
-            <button class="btn danger" onclick="cancelGeneration('generate_planets')" id="cancelPlanetsBtn" style="display:none;">Остановить</button>
-        </div>
-        <div id="planetResult" class="result"></div>
-        <div id="planetProgress" class="progress-container">
-            <span class="progress-text" id="planetProgressText">0 из 0</span>
-            <progress id="planetProgressBar" class="progress-bar" value="0" max="100"></progress>
-        </div>
-    </div>
-
-    <!-- Генерация фракций -->
-    <div class="card">
-        <h2>🏛️ Генерация фракций</h2>
-        <div class="compact-row">
-            <button class="btn success" onclick="generateFactions()">Сгенерировать фракции</button>
-            <button class="btn danger" onclick="cancelGeneration('generate_factions')" id="cancelFactionsBtn" style="display:none;">Остановить</button>
-        </div>
-        <div id="factionResult" class="result"></div>
-        <div id="factionProgress" class="progress-container">
-            <span class="progress-text" id="factionProgressText">0 из 0</span>
-            <progress id="factionProgressBar" class="progress-bar" value="0" max="100"></progress>
-        </div>
-    </div>
-
-    <!-- Очистка -->
-    <div class="card">
-        <h2>🗑️ Очистка вселенной</h2>
-        <button class="btn danger" onclick="clearUniverse()">Удалить все миры</button>
-        <div id="clearResult" class="result"></div>
-    </div>
-
-    <!-- Список миров -->
-    <div class="card">
-        <h2>🌍 Список миров</h2>
-        <div class="search-form">
-            <input type="text" id="searchInput" placeholder="Поиск по названию..." onchange="loadWorlds(1)">
-            <button class="btn" onclick="loadWorlds(1)">Поиск</button>
-            <select id="limitSelect" onchange="loadWorlds(1)">
-                <option value="20">20</option>
-                <option value="50" selected>50</option>
-                <option value="100">100</option>
-            </select>
-            <label style="color:#94a3b8; font-size:0.8rem;">записей</label>
-        </div>
-        <div id="worldsContainer">
-            <table>
-                <thead><tr><th>ID</th><th>Название</th><th>X</th><th>Y</th><th>Действие</th></tr></thead>
-                <tbody id="worldsBody">
-                    <tr><td colspan="5" style="text-align:center;color:#94a3b8;">Загрузка...</td></tr>
-                </tbody>
-            </table>
-            <div class="pagination" id="paginationControls"></div>
-        </div>
-    </div>
 </div>
 
 <script>
@@ -126,6 +234,20 @@
     let adminPassword = localStorage.getItem('adminPassword') || '';
     let currentPage = 1, currentLimit = 50, currentSearch = '';
     let pollIntervals = {};
+
+    // --- Переключение вкладок ---
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            const tabId = this.dataset.tab;
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            if (tabId === 'tab-stats') {
+                loadPlanetStats();
+            }
+        });
+    });
 
     // --- Авторизация ---
     function setPassword() {
@@ -150,7 +272,7 @@
         return res;
     }
 
-    // --- Статистика ---
+    // --- Краткая статистика (для шапки) ---
     async function loadStats() {
         try {
             const res = await fetchWithAuth('/admin/stats');
@@ -158,6 +280,70 @@
             document.getElementById('statsWorlds').textContent = data.worlds || 0;
             document.getElementById('statsPlanets').textContent = data.planets || 0;
         } catch (e) { console.error(e); }
+    }
+
+    // --- Детальная статистика планет (новая) ---
+    async function loadPlanetStats() {
+        const container = document.getElementById('planetStatsContainer');
+        container.innerHTML = '<p style="color:#94a3b8;">⏳ Загрузка статистики...</p>';
+        try {
+            const res = await fetchWithAuth('/admin/stats/planets');
+            if (!res.ok) throw new Error('Failed to fetch stats');
+            const stats = await res.json();
+            renderPlanetStats(stats, container);
+        } catch (e) {
+            container.innerHTML = `<p style="color:#f87171;">❌ Ошибка загрузки: ${e.message}</p>`;
+        }
+    }
+
+    function renderPlanetStats(stats, container) {
+        let html = '';
+
+        // Общая сводка
+        html += `<div class="stat-grid">`;
+        html += `<div class="stat-card"><strong>Всего миров:</strong> ${stats.total_worlds}</div>`;
+        html += `<div class="stat-card"><strong>Миров с планетами:</strong> ${stats.worlds_with_planets}</div>`;
+        html += `<div class="stat-card"><strong>Всего планет:</strong> ${stats.total_planets}</div>`;
+        html += `<div class="stat-card"><strong>Обитаемых:</strong> ${stats.habitable_count}</div>`;
+        html += `<div class="stat-card"><strong>С жизнью:</strong> ${stats.life_count}</div>`;
+        html += `<div class="stat-card"><strong>Средний размер:</strong> ${stats.avg_size.toFixed(2)}</div>`;
+        html += `<div class="stat-card"><strong>Средняя масса:</strong> ${stats.avg_mass.toFixed(2)}</div>`;
+        html += `<div class="stat-card"><strong>Средняя температура:</strong> ${stats.avg_temp.toFixed(0)}K</div>`;
+        html += `<div class="stat-card"><strong>Средняя вода:</strong> ${stats.avg_water.toFixed(1)}%</div>`;
+        html += `<div class="stat-card"><strong>Среднее население:</strong> ${stats.avg_population.toLocaleString()}</div>`;
+        html += `</div>`;
+
+        // Типы планет
+        html += `<h3 style="margin-top:20px;">Распределение по типам</h3>`;
+        html += `<table class="stats-table"><tr><th>Тип</th><th>Кол-во</th></tr>`;
+        for (const [type, count] of Object.entries(stats.planets_by_type)) {
+            html += `<tr><td>${type}</td><td>${count}</td></tr>`;
+        }
+        html += `</table>`;
+
+        // По спектральным классам
+        html += `<h3 style="margin-top:20px;">По спектральным классам</h3>`;
+        html += `<table class="stats-table"><tr><th>Спектр</th><th>Типы (кол-во)</th></tr>`;
+        for (const [spec, types] of Object.entries(stats.planets_by_spectral)) {
+            const typesStr = Object.entries(types).map(([t, c]) => `${t}: ${c}`).join(', ');
+            html += `<tr><td>${spec}</td><td>${typesStr}</td></tr>`;
+        }
+        html += `</table>`;
+
+        // Аномалии
+        html += `<h3 style="margin-top:20px;">⚠️ Аномалии</h3>`;
+        if (stats.anomalies && stats.anomalies.length > 0) {
+            html += `<ul>`;
+            stats.anomalies.forEach(a => {
+                const severityClass = a.severity === 'high' ? 'anomaly-high' : a.severity === 'medium' ? 'anomaly-medium' : 'anomaly-low';
+                html += `<li class="${severityClass}">${a.description}: ${a.value.toFixed(1)} (ожидалось ~${a.expected.toFixed(1)})</li>`;
+            });
+            html += `</ul>`;
+        } else {
+            html += `<p style="color:#6fcf97;">✅ Аномалий не обнаружено</p>`;
+        }
+
+        container.innerHTML = html;
     }
 
     // --- Список миров ---

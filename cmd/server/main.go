@@ -95,7 +95,7 @@ func main() {
 	// API фильтрации миров
 	http.HandleFunc("/api/worlds/filter", auth.AuthMiddleware(adminHandlers.FilterWorldsHandler))
 
-	// API изображения планет (добавлен)
+	// API изображения планет
 	http.HandleFunc("/api/planet-image", handlers.PlanetImageHandler)
 
 	// WebSocket
@@ -107,6 +107,7 @@ func main() {
 	http.HandleFunc("/admin/worlds/create", auth.AdminAuth(adminHandlers.CreateWorld))
 	http.HandleFunc("/admin/generate", auth.AdminAuth(adminHandlers.GenerateUniverse))
 	http.HandleFunc("/admin/stats", auth.AdminAuth(adminHandlers.GetStats))
+	http.HandleFunc("/admin/stats/planets", auth.AdminAuth(adminHandlers.GetPlanetStatsHandler)) // <-- новый маршрут
 	http.HandleFunc("/admin/generate-status", auth.AdminAuth(adminHandlers.GenerateStatus))
 	http.HandleFunc("/admin/clear", auth.AdminAuth(adminHandlers.ClearUniverse))
 	http.HandleFunc("/admin/generate-planets", auth.AdminAuth(adminHandlers.GeneratePlanets))
