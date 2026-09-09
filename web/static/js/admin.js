@@ -177,19 +177,19 @@ export function renderPlanetStats(stats, container) {
 
     // Гидросферы
     const hydroBody = document.getElementById('hydro-body');
-    let hydroData = Object.entries(stats.hydrosphere_count || {}).map(([type, count]) => ({ type, count }));
+    let hydroData = Object.entries(stats.hydrosphereCount || {}).map(([type, count]) => ({ type, count }));
     hydroData.sort((a, b) => b.count - a.count);
     hydroBody.innerHTML = hydroData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
 
     // Атмосферы
     const atmoBody = document.getElementById('atmo-body');
-    let atmoData = Object.entries(stats.atmosphere_count || {}).map(([type, count]) => ({ type, count }));
+    let atmoData = Object.entries(stats.atmosphereCount || {}).map(([type, count]) => ({ type, count }));
     atmoData.sort((a, b) => b.count - a.count);
     atmoBody.innerHTML = atmoData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
 
     // Биосферы
     const bioBody = document.getElementById('bio-body');
-    let bioData = Object.entries(stats.biosphere_count || {}).map(([type, count]) => ({ type, count }));
+    let bioData = Object.entries(stats.biosphereCount || {}).map(([type, count]) => ({ type, count }));
     bioData.sort((a, b) => b.count - a.count);
     bioBody.innerHTML = bioData.map(d => `<tr><td>${d.type}</td><td>${d.count}</td></tr>`).join('');
 
@@ -203,9 +203,7 @@ export function renderPlanetStats(stats, container) {
     spectralData.sort((a, b) => b.total - a.total);
     spectralBody.innerHTML = spectralData.map(d => `<tr><td>${d.spec}</td><td>${d.typesStr}</td><td>${d.total}</td></tr>`).join('');
 
-    // --- Обработчики сортировки (для всех таблиц) ---
-
-    // Универсальная функция для добавления сортировки
+    // --- Обработчики сортировки ---
     function addSorting(tableId, bodyId, sortKeyMap) {
         const table = document.getElementById(tableId);
         if (!table) return;
@@ -225,7 +223,6 @@ export function renderPlanetStats(stats, container) {
                         valA = key === 'text' ? a.cells[0].textContent : parseInt(a.cells[1].textContent);
                         valB = key === 'text' ? b.cells[0].textContent : parseInt(b.cells[1].textContent);
                     } else {
-                        // fallback: по первой колонке как текст
                         valA = a.cells[0].textContent;
                         valB = b.cells[0].textContent;
                     }
@@ -236,7 +233,6 @@ export function renderPlanetStats(stats, container) {
                     }
                 });
                 rows.forEach(row => tbody.appendChild(row));
-                // Убираем стрелки у всех заголовков
                 table.querySelectorAll('.sortable').forEach(th => {
                     th.textContent = th.textContent.replace(/ [▲▼]/, '');
                 });
@@ -245,7 +241,6 @@ export function renderPlanetStats(stats, container) {
         });
     }
 
-    // Применяем сортировку для каждой таблицы
     addSorting('gd-table', 'gd-body', { gdtype: 'text', gdcount: 'number' });
     addSorting('type-table', 'type-body', { type: 'text', count: 'number' });
     addSorting('hydro-table', 'hydro-body', { hydro: 'text', hydrocount: 'number' });
