@@ -1,3 +1,4 @@
+// cmd/server/main.go
 package main
 
 import (
@@ -93,6 +94,9 @@ func main() {
 
 	// API фильтрации миров
 	http.HandleFunc("/api/worlds/filter", auth.AuthMiddleware(adminHandlers.FilterWorldsHandler))
+
+	// API изображения планет (добавлен)
+	http.HandleFunc("/api/planet-image", handlers.PlanetImageHandler)
 
 	// WebSocket
 	http.HandleFunc("/ws", auth.AuthMiddleware(wsHandler.ServeWS))
