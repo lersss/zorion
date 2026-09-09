@@ -1,4 +1,4 @@
-// index.js
+// web/static/js/modal/index.js
 import { modalState, resetState } from './state.js';
 import { drawSystem } from './render.js';
 import { initEvents } from './events.js';
@@ -46,20 +46,169 @@ function renderModal(worldName, spectralClass, planets) {
     const starColor = getStarColor(spectralClass);
     const starRadius = getStarSize(spectralClass);
 
-    // Создаём оверлей и модалку (код идентичен предыдущему, я не буду дублировать его здесь полностью)
-    // Вставьте сюда полный код создания оверлея, модалки, заголовка, кнопки закрытия, таблицы и т.д.
-    // Я приведу полный файл в конце, чтобы не перегружать это сообщение.
-    // Но структура: оверлей -> модалка -> заголовок + кнопка закрытия -> canvasWrapper + tableWrapper.
+    // Создаём оверлей
+    const overlay = document.createElement('div');
+    overlay.id = 'system-modal-overlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.7);
+        z-index: 1000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        backdrop-filter: blur(4px);
+        animation: fadeIn 0.2s ease;
+    `;
 
-    // ... (весь код рендеринга модалки, который был в renderModal, перенесите сюда)
+    // Модальное окно
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        background: #1a1a2e;
+        color: #e0e0e0;
+        border-radius: 16px;
+        padding: 20px;
+        width: 90%;
+        max-width: 1100px;
+        height: 85vh;
+        max-height: 800px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        position: relative;
+    `;
 
-    // После создания canvas, инициализируем события
-    const canvas = document.getElementById('system-canvas');
-    const canvasWrapper = canvas.parentElement;
+    // Заголовок
+    const header = document.createElement('div');
+    header.style.cssText = `
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    `;
+    const title = document.createElement('h2');
+    title.textContent = `${worldName} (${spectralClass})`;
+    title.style.cssText = `
+        margin: 0;
+        font-size: 1.5rem;
+        color: ${starColor};
+    `;
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '✕';
+    closeBtn.style.cssText = `
+        background: none;
+        border: none;
+        color: #aaa;
+        font-size: 1.8rem;
+        cursor: pointer;
+        padding: 0 8px;
+    `;
+    closeBtn.onclick = () => closeModal();
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+    modal.appendChild(header);
+
+    // Контент: Canvas + таблица
+    const content = document.createElement('div');
+    content.style.cssText = `
+        display: flex;
+        flex: 1;
+        gap: 20px;
+        min-height: 0;
+    `;
+
+    // Canvas
+    const canvasWrapper = document.createElement('div');
+    canvasWrapper.style.cssText = `
+        flex: 2;
+        min-width: 0;
+        background: #0d0d1a;
+        border-radius: 12px;
+        position: relative;
+        overflow: hidden;
+        cursor: grab;
+    `;
+    const canvas = document.createElement('canvas');
+    canvas.id = 'system-canvas';
+    canvas.style.cssText = `
+        width: 100%;
+        height: 100%;
+        display: block;
+    `;
+    canvasWrapper.appendChild(canvas);
+    content.appendChild(canvasWrapper);
+
+    // Таблица
+    const tableWrapper = document.createElement('div');
+    tableWrapper.style.cssText = `
+        flex: 1;
+        background: #12121f;
+        border-radius: 12px;
+        padding: 12px;
+        overflow-y: auto;
+        min-width: 200px;
+        max-height: 100%;
+    `;
+    const tableTitle = document.createElement('h3');
+    tableTitle.textContent = 'Планеты';
+    tableTitle.style.cssText = `margin: 0 0 8px 0; font-size: 1rem; color: #aaa;`;
+    tableWrapper.appendChild(tableTitle);
+
+    const table = document.createElement('table');
+    table.style.cssText = `
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+    `;
+    const thead = document.createElement('thead');
+    thead.innerHTML = `
+        <tr>
+            <th>#</th>
+            <th>Тип</th>
+            <th>Размер</th>
+            <th>Температура</th>
+        </tr>
+    `;
+    thead.style.cssText = `text-align: left; color: #888; border-bottom: 1px solid #333;`;
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    if (planets && planets.length > 0) {
+        planets.forEach((p, idx) => {
+            const tr = document.createElement('tr');
+            tr.style.cssText = `border-bottom: 1px solid #1a1a2e;`;
+            tr.innerHTML = `
+                <td>${idx + 1}</td>
+                <td>${p.type || 'неизвестно'}</td>
+                <td>${p.size ? p.size.toFixed(1) : '-'}</td>
+                <td>${p.temperature ? p.temperature.toFixed(0) + 'K' : '-'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } else {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="4" style="text-align:center;color:#666;">Нет планет</td>`;
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    tableWrapper.appendChild(table);
+    content.appendChild(tableWrapper);
+
+    modal.appendChild(content);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Закрытие по клику на оверлей (вне модалки)
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeModal();
+    });
+
+    // Размеры
     const rect = canvasWrapper.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
 
+    // Сохраняем в состоянии
     modalState.canvasWidth = width;
     modalState.canvasHeight = height;
     modalState.starRadius = starRadius;
@@ -71,13 +220,15 @@ function renderModal(worldName, spectralClass, planets) {
 
     clearTextureCache();
 
+    // Отрисовка
     requestAnimationFrame(() => {
         drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
     });
 
+    // Инициализация событий (зум, панорамирование, ховер)
     initEvents(canvas, spectralClass, planets, starRadius, starColor, width, height);
 
-    // Resize observer (если нужно)
+    // Resize observer для адаптации
     const resizeObserver = new ResizeObserver(() => {
         const newRect = canvasWrapper.getBoundingClientRect();
         modalState.canvasWidth = newRect.width;
@@ -85,12 +236,6 @@ function renderModal(worldName, spectralClass, planets) {
         drawSystem(canvas, spectralClass, planets, starRadius, starColor, newRect.width, newRect.height);
     });
     resizeObserver.observe(canvasWrapper);
-
-    // Закрытие по клику на оверлей
-    const overlay = document.getElementById('system-modal-overlay');
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) closeModal();
-    });
 }
 
 function closeModal() {
@@ -99,5 +244,18 @@ function closeModal() {
     resetState();
 }
 
-// Экспортируем функцию для глобального использования
+// Добавляем стиль анимации (если ещё нет)
+if (!document.getElementById('modal-fade-style')) {
+    const style = document.createElement('style');
+    style.id = 'modal-fade-style';
+    style.textContent = `
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// Экспортируем функцию глобально для вызова из map/events.js
 window.openSystemModal = openSystemModal;
