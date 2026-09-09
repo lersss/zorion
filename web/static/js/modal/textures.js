@@ -1,5 +1,5 @@
-// textures.js
-import PlanetGenerator from '../planet-generator.js';
+// web/static/js/modal/textures.js
+import PlanetGenerator from '../planet_generator.js';
 import { hashStringToNumber, getClimateId } from './utils.js';
 
 let planetGen = null;
