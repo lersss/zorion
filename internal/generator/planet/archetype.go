@@ -47,17 +47,21 @@ var archetypeCache *ArchetypeConfig
 
 // LoadArchetypes загружает конфиг из JSON
 func LoadArchetypes(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var cfg ArchetypeConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return err
-	}
-	archetypeCache = &cfg
-	return nil
-}
+    // Получаем абсолютный путь
+    absPath, err := filepath.Abs(path)
+    if err != nil {
+        log.Printf("⚠️ Ошибка получения абсолютного пути: %v", err)
+        absPath = path
+    }
+    log.Printf("🔍 Загрузка архетипов из: %s", absPath)
+
+    data, err := os.ReadFile(absPath)
+    if err != nil {
+        // Если не нашли, пробуем искать относительно текущей директории
+        cwd, _ := os.Getwd()
+        log.Printf("⚠️ Текущая директория: %s", cwd)
+        return err
+    }
 
 // GenerateArchetype создаёт архетип на основе спектрального класса
 func GenerateArchetype(spectralClass string, rng *rand.Rand) *Archetype {
