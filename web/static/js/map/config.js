@@ -26,6 +26,7 @@ export const state = {
 
 export const elements = {
     canvas: document.getElementById('mapCanvas'),
+    ctx: document.getElementById('mapCanvas').getContext('2d'), // <-- добавлено
     tooltip: document.getElementById('tooltip'),
     tooltipName: document.getElementById('tooltipName'),
     tooltipType: document.getElementById('tooltipType'),
@@ -33,5 +34,5 @@ export const elements = {
     tooltipFlyBtn: document.getElementById('tooltipFlyBtn'),
     statusBar: document.getElementById('status-bar'),
     zoomInfo: document.getElementById('zoom-info'),
-    loading: document.getElementById('loading'), // <-- добавлено
+    loading: document.getElementById('loading'),
 };
