@@ -1,4 +1,4 @@
-// minimap.js
+// web/static/js/modal/minimap.js
 import { modalState } from './state.js';
 
 export function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height) {
@@ -6,6 +6,7 @@ export function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, 
     const miniX = width - miniSize - 20;
     const miniY = height - miniSize - 20;
 
+    // Фон
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.strokeStyle = '#444';
@@ -16,6 +17,7 @@ export function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, 
     ctx.stroke();
     ctx.restore();
 
+    // ---- Вычисление радиуса системы ----
     let systemRadius = starRadius * 1.8;
     if (planets && planets.length > 0) {
         const maxOrbitIndex = planets.reduce((max, p) => Math.max(max, p.orbit_index), 0);
@@ -25,11 +27,13 @@ export function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, 
         systemRadius = Math.max(systemRadius, maxOrbitRadius);
     }
 
+    // ---- Масштаб мини-карты (чтобы вся система помещалась) ----
     const padding = 0.9;
     const miniScale = (miniSize * padding) / (systemRadius * 2);
     const centerX = miniX + miniSize / 2;
     const centerY = miniY + miniSize / 2;
 
+    // ---- Рисуем звезду и планеты ----
     ctx.save();
     ctx.beginPath();
     ctx.arc(centerX, centerY, Math.max(2, starRadius * miniScale), 0, 2 * Math.PI);
@@ -56,36 +60,36 @@ export function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, 
         });
     }
 
+    // ---- РАМКА ВИДИМОЙ ОБЛАСТИ (ОГРАНИЧЕННАЯ) ----
+    // Вычисляем размер рамки в координатах мини-карты
     const viewScale = miniScale;
-    const viewWidth = (width / modalState.zoom) * viewScale;
-    const viewHeight = (height / modalState.zoom) * viewScale;
-    const viewCenterX = centerX - (modalState.offsetX / modalState.zoom) * viewScale;
-    const viewCenterY = centerY - (modalState.offsetY / modalState.zoom) * viewScale;
+    let viewWidth = (width / modalState.zoom) * viewScale;
+    let viewHeight = (height / modalState.zoom) * viewScale;
+
+    // Ограничиваем рамку размерами мини-карты (чтобы не вылезала за границы)
+    viewWidth = Math.min(viewWidth, miniSize);
+    viewHeight = Math.min(viewHeight, miniSize);
+
+    // Вычисляем центр рамки (с учётом панорамирования)
+    let viewCenterX = centerX - (modalState.offsetX / modalState.zoom) * viewScale;
+    let viewCenterY = centerY - (modalState.offsetY / modalState.zoom) * viewScale;
+
+    // Ограничиваем центр рамки, чтобы она не выходила за границы мини-карты
+    const minX = miniX + viewWidth / 2;
+    const maxX = miniX + miniSize - viewWidth / 2;
+    const minY = miniY + viewHeight / 2;
+    const maxY = miniY + miniSize - viewHeight / 2;
+    viewCenterX = Math.max(minX, Math.min(maxX, viewCenterX));
+    viewCenterY = Math.max(minY, Math.min(maxY, viewCenterY));
+
     const viewX = viewCenterX - viewWidth / 2;
     const viewY = viewCenterY - viewHeight / 2;
 
+    // ---- Рисуем рамку ----
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 1;
     ctx.setLineDash([2, 3]);
     ctx.strokeRect(viewX, viewY, viewWidth, viewHeight);
     ctx.restore();
-}
-
-// roundRect polyfill (если не определён)
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-    CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
-        if (w < 2 * r) r = w / 2;
-        if (h < 2 * r) r = h / 2;
-        this.moveTo(x + r, y);
-        this.lineTo(x + w - r, y);
-        this.quadraticCurveTo(x + w, y, x + w, y + r);
-        this.lineTo(x + w, y + h - r);
-        this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        this.lineTo(x + r, y + h);
-        this.quadraticCurveTo(x, y + h, x, y + h - r);
-        this.lineTo(x, y + r);
-        this.quadraticCurveTo(x, y, x + r, y);
-        return this;
-    };
 }
