@@ -33,7 +33,7 @@ async function loadWorldsWithFilters(filters) {
 }
 
 // --- Загрузка всех данных (миры + пользователь) ---
-async function loadAllData() {
+async function loadAllData(filters) {
     const token = localStorage.getItem('token');
     if (!token) {
         console.warn('No token, redirect to login');
@@ -44,26 +44,22 @@ async function loadAllData() {
     elements.statusBar.textContent = '⏳ Загрузка данных...';
 
     try {
-        // Загружаем миры с фильтрами (если они активны)
-        let filters = null;
-        if (filterState.hasPlanets || filterState.hasLife || filterState.hasHabitable ||
-            filterState.planetType || filterState.resourceCategory) {
-            filters = filterState;
-        }
-        const worlds = await loadWorldsWithFilters(filters);
+        const worlds = await loadWorldsWithFilters(filters || null);
         state.worlds = worlds;
-        state.filteredWorlds = null; // фильтрация уже на бэкенде
+        state.filteredWorlds = null;
 
-        // Загружаем данные пользователя
         await loadUserData();
 
-        // Центрируем карту
         if (state.currentWorldId) {
             centerOnAgent();
         } else {
             if (state.worlds.length > 0) {
                 const first = state.worlds[0];
-                // центрирование будет выполнено после resize
+                const pos = worldToCanvas(first);
+                if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
+                    state.offsetX = state.canvasWidth / 2 - pos.x;
+                    state.offsetY = state.canvasHeight / 2 - pos.y;
+                }
             }
         }
 
@@ -116,15 +112,25 @@ function init() {
     if (applyBtn) {
         applyBtn.addEventListener('click', async () => {
             applyFiltersFromUI();
-            // Перезагружаем миры с новыми фильтрами
+            // Формируем объект фильтров из filterState
+            const filters = {};
+            if (filterState.hasPlanets) filters.hasPlanets = true;
+            if (filterState.hasLife) filters.hasLife = true;
+            if (filterState.hasHabitable) filters.hasHabitable = true;
+            if (filterState.planetType) filters.planetType = filterState.planetType;
+            if (filterState.resourceCategory) filters.resourceCategory = filterState.resourceCategory;
+
+            const statusEl = document.getElementById('filter-status');
+            if (statusEl) statusEl.textContent = '⏳ Применение...';
+
             try {
-                await loadAllData();
-                const statusEl = document.getElementById('filter-status');
+                await loadAllData(filters);
                 if (statusEl) {
-                    statusEl.textContent = `Показано: ${state.worlds.length}`;
+                    statusEl.textContent = `Показано: ${state.worlds.length} миров`;
                 }
             } catch (e) {
                 console.error('Filter apply error:', e);
+                if (statusEl) statusEl.textContent = '❌ Ошибка применения фильтра';
             }
         });
     }
@@ -138,21 +144,21 @@ function init() {
             document.getElementById('filter-habitable').checked = false;
             document.getElementById('filter-planet-type').value = '';
             document.getElementById('filter-resource').value = '';
-            // Перезагружаем без фильтров
+            const statusEl = document.getElementById('filter-status');
+            if (statusEl) statusEl.textContent = '⏳ Сброс...';
+
             try {
-                await loadAllData();
-                const statusEl = document.getElementById('filter-status');
-                if (statusEl) {
-                    statusEl.textContent = '';
-                }
+                await loadAllData(null);
+                if (statusEl) statusEl.textContent = '';
             } catch (e) {
                 console.error('Reset filter error:', e);
+                if (statusEl) statusEl.textContent = '❌ Ошибка сброса';
             }
         });
     }
 
-    // Первоначальная загрузка
-    loadAllData().then(() => {
+    // Первоначальная загрузка без фильтров
+    loadAllData(null).then(() => {
         animationLoop();
     });
 }
