@@ -1,7 +1,7 @@
 // web/static/js/map/events.js
 import { state, elements } from './config.js';
 import { worldToCanvas, isFiniteNumber } from './utils.js';
-import { draw } from './map_render.js'; // <-- обновлён импорт
+import { draw } from './map_render.js';
 import { loadData } from './data.js';
 import { centerOnAgent } from './navigation.js';
 import { CONFIG } from '../config.js';
@@ -55,9 +55,17 @@ export function initHover() {
 
 // --- CLICK ---
 export function handleCanvasClick(e) {
-    // Если был drag, игнорируем клик
+    // Если был drag (перемещение более чем на 5 пикселей), игнорируем клик
     if (state.isDragging) {
         return;
+    }
+    // Также проверяем, что мышь переместилась не слишком далеко от места нажатия
+    if (state.dragStartX !== undefined && state.dragStartY !== undefined) {
+        const dx = e.clientX - state.dragStartX;
+        const dy = e.clientY - state.dragStartY;
+        if (Math.hypot(dx, dy) > 5) {
+            return;
+        }
     }
 
     const rect = elements.canvas.getBoundingClientRect();
@@ -161,9 +169,12 @@ export function initPanZoom() {
         }
     });
 
-    window.addEventListener('mouseup', () => {
+    window.addEventListener('mouseup', (e) => {
         if (state.isDragging) {
             state.isDragging = false;
+            // Сохраняем конечную позицию мыши для проверки клика
+            state.dragEndX = e.clientX;
+            state.dragEndY = e.clientY;
             if (state.hoveredWorldId === null) {
                 elements.canvas.style.cursor = 'crosshair';
             } else {

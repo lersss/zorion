@@ -35,7 +35,7 @@ async function loadWorldsWithFilters(filters) {
 }
 
 // --- Загрузка всех данных (миры + пользователь) ---
-async function loadAllData(filters) {
+async function loadAllData(filters, keepViewport = false) {
     const token = localStorage.getItem('token');
     if (!token) {
         console.warn('No token, redirect to login');
@@ -45,6 +45,11 @@ async function loadAllData(filters) {
     elements.loading.style.display = 'block';
     elements.statusBar.textContent = '⏳ Загрузка данных...';
 
+    // Сохраняем текущий вьюпорт, если нужно сохранить
+    const savedOffsetX = keepViewport ? state.offsetX : null;
+    const savedOffsetY = keepViewport ? state.offsetY : null;
+    const savedScale = keepViewport ? state.scale : null;
+
     try {
         const worlds = await loadWorldsWithFilters(filters || null);
         state.worlds = worlds;
@@ -52,15 +57,22 @@ async function loadAllData(filters) {
 
         await loadUserData();
 
-        if (state.currentWorldId) {
-            centerOnAgent();
+        // Восстанавливаем вьюпорт или центрируем
+        if (savedOffsetX !== null && savedOffsetY !== null && savedScale !== null) {
+            state.offsetX = savedOffsetX;
+            state.offsetY = savedOffsetY;
+            state.scale = savedScale;
         } else {
-            if (state.worlds.length > 0) {
-                const first = state.worlds[0];
-                const pos = worldToCanvas(first);
-                if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
-                    state.offsetX = state.canvasWidth / 2 - pos.x;
-                    state.offsetY = state.canvasHeight / 2 - pos.y;
+            if (state.currentWorldId) {
+                centerOnAgent();
+            } else {
+                if (state.worlds.length > 0) {
+                    const first = state.worlds[0];
+                    const pos = worldToCanvas(first);
+                    if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
+                        state.offsetX = state.canvasWidth / 2 - pos.x;
+                        state.offsetY = state.canvasHeight / 2 - pos.y;
+                    }
                 }
             }
         }
@@ -126,7 +138,7 @@ function init() {
         if (countEl) countEl.textContent = '...';
 
         try {
-            await loadAllData(filters);
+            await loadAllData(filters, true); // keepViewport = true
             if (countEl) {
                 const activeCount = Object.keys(filters).length;
                 countEl.textContent = activeCount > 0 ? `(${activeCount})` : '';
@@ -161,7 +173,7 @@ function init() {
             if (countEl) countEl.textContent = '...';
 
             try {
-                await loadAllData(null);
+                await loadAllData(null, false); // keepViewport = false (центрируем)
                 if (countEl) countEl.textContent = '';
             } catch (e) {
                 console.error('Reset filter error:', e);
@@ -172,7 +184,7 @@ function init() {
         });
     }
 
-    loadAllData(null).then(() => {
+    loadAllData(null, false).then(() => {
         animationLoop();
     });
 }
