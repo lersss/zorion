@@ -437,6 +437,33 @@ export async function generateFactions() {
     }
 }
 
+// --- Генерация ресурсов ---
+export async function generateResources() {
+    if (!confirm('Сгенерировать ресурсы для всех планет?')) return;
+    document.getElementById('resourceResult').textContent = '⏳ Генерация запущена...';
+    document.getElementById('resourceProgress').style.display = 'block';
+    document.getElementById('resourceProgressBar').value = 0;
+    document.getElementById('resourceProgressText').textContent = 'Подготовка...';
+    document.getElementById('cancelResourcesBtn').style.display = 'inline-block';
+
+    try {
+        const res = await fetchWithAuth('/admin/generate-resources', { method: 'POST' });
+        if (!res.ok) {
+            const text = await res.text();
+            document.getElementById('resourceResult').textContent = '❌ Ошибка: ' + text;
+            document.getElementById('resourceProgress').style.display = 'none';
+            document.getElementById('cancelResourcesBtn').style.display = 'none';
+            return;
+        }
+        if (pollIntervals['resources']) clearInterval(pollIntervals['resources']);
+        pollIntervals['resources'] = setInterval(() => pollJob('generate_resources', 'resourceProgress', 'resourceResult', 'cancelResourcesBtn'), 1500);
+    } catch (e) {
+        document.getElementById('resourceResult').textContent = '❌ ' + e.message;
+        document.getElementById('resourceProgress').style.display = 'none';
+        document.getElementById('cancelResourcesBtn').style.display = 'none';
+    }
+}
+
 // --- Общий опрос статуса ---
 async function pollJob(jobType, progressId, resultId, cancelBtnId) {
     try {
@@ -492,7 +519,9 @@ export async function cancelGeneration(jobType) {
         if (res.ok) {
             alert('Остановка запрошена');
             const btnId = jobType === 'generate_universe' ? 'cancelUniverseBtn' :
-                          jobType === 'generate_planets' ? 'cancelPlanetsBtn' : 'cancelFactionsBtn';
+                          jobType === 'generate_planets' ? 'cancelPlanetsBtn' :
+                          jobType === 'generate_factions' ? 'cancelFactionsBtn' :
+                          'cancelResourcesBtn';
             document.getElementById(btnId).style.display = 'none';
         } else {
             const text = await res.text();
@@ -528,6 +557,7 @@ export function initAdmin() {
     window.generateUniverse = generateUniverse;
     window.generatePlanets = generatePlanets;
     window.generateFactions = generateFactions;
+    window.generateResources = generateResources;
     window.cancelGeneration = cancelGeneration;
     window.clearUniverse = clearUniverse;
     window.loadPlanetStats = loadPlanetStats;
