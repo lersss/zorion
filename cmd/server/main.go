@@ -1,11 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
-
-	"context"
 
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
@@ -23,39 +22,37 @@ var rdb *redis.Client
 
 func main() {
 	cfg := config.Load()
-	log.Printf("Запуск сервера Zorion на порту %s", cfg.ServerPort)
-	log.Printf("Интервал тика: %v", cfg.TickInterval)
+	log.Printf("🚀 Запуск сервера Zorion на порту %s", cfg.ServerPort)
+	log.Printf("⏱️  Интервал тика: %v", cfg.TickInterval)
 
 	var err error
 	db, err = sql.Open("postgres", cfg.DBURL)
 	if err != nil {
-		log.Fatalf("Ошибка подключения к PostgreSQL: %v", err)
+		log.Fatalf("❌ Ошибка подключения к PostgreSQL: %v", err)
 	}
 	defer db.Close()
 
 	if err = db.Ping(); err != nil {
-		log.Fatalf("PostgreSQL не отвечает: %v", err)
+		log.Fatalf("❌ PostgreSQL не отвечает: %v", err)
 	}
 	log.Println("✅ PostgreSQL подключен")
 
 	opt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
-		log.Fatalf("Ошибка парсинга Redis URL: %v", err)
+		log.Fatalf("❌ Ошибка парсинга Redis URL: %v", err)
 	}
 	rdb = redis.NewClient(opt)
 	if err = rdb.Ping(context.Background()).Err(); err != nil {
-		log.Fatalf("Redis не отвечает: %v", err)
+		log.Fatalf("❌ Redis не отвечает: %v", err)
 	}
 	log.Println("✅ Redis подключен")
 
-	// ------------------------------------------------------------------
-	// ЗАГРУЗКА АРХЕТИПОВ ПЛАНЕТ (новая система типов)
+	// Загрузка архетипов планет
 	if err := planet.LoadArchetypes("config/planet_archetypes.json"); err != nil {
 		log.Printf("⚠️ Не удалось загрузить архетипы планет: %v, использую fallback", err)
 	} else {
 		log.Println("✅ Архетипы планет загружены")
 	}
-	// ------------------------------------------------------------------
 
 	worldRepo := repository.NewWorldRepository(db)
 	locationRepo := repository.NewLocationRepository(db)
