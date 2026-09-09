@@ -7,6 +7,22 @@ import { centerOnAgent } from './map/navigation.js';
 import { applyFiltersFromUI, resetFilters, filterState } from './filters.js';
 import { openSystemModal } from './modal/index.js';
 import { worldToCanvas, isFiniteNumber } from './map/utils.js';
+import { draw } from './map/map_render.js';
+
+// --- Восстановление вьюпорта из sessionStorage ---
+function restoreViewport() {
+    try {
+        const saved = sessionStorage.getItem('viewport');
+        if (saved) {
+            const vp = JSON.parse(saved);
+            state.offsetX = vp.offsetX || 0;
+            state.offsetY = vp.offsetY || 0;
+            state.scale = vp.scale || 1;
+            return true;
+        }
+    } catch (e) { /* ignore */ }
+    return false;
+}
 
 // --- Загрузка миров с фильтрацией ---
 async function loadWorldsWithFilters(filters) {
@@ -45,7 +61,6 @@ async function loadAllData(filters, keepViewport = false) {
     elements.loading.style.display = 'block';
     elements.statusBar.textContent = '⏳ Загрузка данных...';
 
-    // Сохраняем текущий вьюпорт, если нужно сохранить
     const savedOffsetX = keepViewport ? state.offsetX : null;
     const savedOffsetY = keepViewport ? state.offsetY : null;
     const savedScale = keepViewport ? state.scale : null;
@@ -57,21 +72,23 @@ async function loadAllData(filters, keepViewport = false) {
 
         await loadUserData();
 
-        // Восстанавливаем вьюпорт или центрируем
         if (savedOffsetX !== null && savedOffsetY !== null && savedScale !== null) {
             state.offsetX = savedOffsetX;
             state.offsetY = savedOffsetY;
             state.scale = savedScale;
         } else {
-            if (state.currentWorldId) {
-                centerOnAgent();
-            } else {
-                if (state.worlds.length > 0) {
-                    const first = state.worlds[0];
-                    const pos = worldToCanvas(first);
-                    if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
-                        state.offsetX = state.canvasWidth / 2 - pos.x;
-                        state.offsetY = state.canvasHeight / 2 - pos.y;
+            // Если не нужно сохранять вьюпорт, либо центрируем, либо восстанавливаем из sessionStorage
+            if (!restoreViewport()) {
+                if (state.currentWorldId) {
+                    centerOnAgent();
+                } else {
+                    if (state.worlds.length > 0) {
+                        const first = state.worlds[0];
+                        const pos = worldToCanvas(first);
+                        if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
+                            state.offsetX = state.canvasWidth / 2 - pos.x;
+                            state.offsetY = state.canvasHeight / 2 - pos.y;
+                        }
                     }
                 }
             }
@@ -138,7 +155,7 @@ function init() {
         if (countEl) countEl.textContent = '...';
 
         try {
-            await loadAllData(filters, true); // keepViewport = true
+            await loadAllData(filters, true);
             if (countEl) {
                 const activeCount = Object.keys(filters).length;
                 countEl.textContent = activeCount > 0 ? `(${activeCount})` : '';
@@ -173,7 +190,7 @@ function init() {
             if (countEl) countEl.textContent = '...';
 
             try {
-                await loadAllData(null, false); // keepViewport = false (центрируем)
+                await loadAllData(null, true);
                 if (countEl) countEl.textContent = '';
             } catch (e) {
                 console.error('Reset filter error:', e);

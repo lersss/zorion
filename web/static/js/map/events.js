@@ -9,6 +9,17 @@ import { openSystemModal } from '../modal/index.js';
 
 const { map: mapCfg, ui: uiCfg } = CONFIG;
 
+// --- Сохранение вьюпорта ---
+function saveViewport() {
+    try {
+        sessionStorage.setItem('viewport', JSON.stringify({
+            offsetX: state.offsetX,
+            offsetY: state.offsetY,
+            scale: state.scale
+        }));
+    } catch (e) { /* ignore */ }
+}
+
 // --- HOVER ---
 export function initHover() {
     elements.canvas.addEventListener('mousemove', (e) => {
@@ -55,11 +66,9 @@ export function initHover() {
 
 // --- CLICK ---
 export function handleCanvasClick(e) {
-    // Если был drag (перемещение более чем на 5 пикселей), игнорируем клик
     if (state.isDragging) {
         return;
     }
-    // Также проверяем, что мышь переместилась не слишком далеко от места нажатия
     if (state.dragStartX !== undefined && state.dragStartY !== undefined) {
         const dx = e.clientX - state.dragStartX;
         const dy = e.clientY - state.dragStartY;
@@ -172,7 +181,6 @@ export function initPanZoom() {
     window.addEventListener('mouseup', (e) => {
         if (state.isDragging) {
             state.isDragging = false;
-            // Сохраняем конечную позицию мыши для проверки клика
             state.dragEndX = e.clientX;
             state.dragEndY = e.clientY;
             if (state.hoveredWorldId === null) {
@@ -180,6 +188,8 @@ export function initPanZoom() {
             } else {
                 elements.canvas.style.cursor = 'pointer';
             }
+            // Сохраняем вьюпорт после завершения драга
+            saveViewport();
         }
     });
 
@@ -201,6 +211,7 @@ export function initPanZoom() {
 
         elements.zoomInfo.textContent = Math.round(state.scale * 100) + '%';
         draw();
+        saveViewport();
     }, { passive: false });
 
     document.getElementById('zoomInBtn').addEventListener('click', () => {
@@ -213,6 +224,7 @@ export function initPanZoom() {
         state.offsetY = centerY - worldY * state.scale;
         elements.zoomInfo.textContent = Math.round(state.scale * 100) + '%';
         draw();
+        saveViewport();
     });
 
     document.getElementById('zoomOutBtn').addEventListener('click', () => {
@@ -225,6 +237,7 @@ export function initPanZoom() {
         state.offsetY = centerY - worldY * state.scale;
         elements.zoomInfo.textContent = Math.round(state.scale * 100) + '%';
         draw();
+        saveViewport();
     });
 
     document.getElementById('centerBtn').addEventListener('click', centerOnAgent);
