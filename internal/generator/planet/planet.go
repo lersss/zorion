@@ -115,9 +115,7 @@ func WithCacheEnabled(enabled bool) func(*PlanetGenerator) {
 func WithMaxCacheSize(size int) func(*PlanetGenerator) {
 	return func(pg *PlanetGenerator) { pg.maxCacheSize = size }
 }
-func WithSeed(seed int64) func(*PlanetGenerator) {
-	return func(pg *PlanetGenerator) { pg.rand = rand.New(rand.NewSource(seed)) }
-}
+// WithSeed для генератора удалён — используем WithSeed из GenerateOptions
 
 // ---------- Опции для генерации ----------
 type GenerateOptions struct {
@@ -661,7 +659,7 @@ func (pg *PlanetGenerator) generateGas(img *image.RGBA, size int, rng *rand.Rand
 	spotX := cx + (rng.Float64()-0.5)*radius*0.8
 	spotY := cy + (rng.Float64()-0.5)*radius*0.6
 	spotR := 3 + rng.Float64()*8
-	spotCol := hslToRgb(int(baseHue+20), 90, 60)
+	spotColR, spotColG, spotColB := hslToRgb(int(baseHue+20), 90, 60)
 
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {
@@ -669,10 +667,10 @@ func (pg *PlanetGenerator) generateGas(img *image.RGBA, size int, rng *rand.Rand
 			dy := float64(y) - cy
 			dist := math.Sqrt(dx*dx + dy*dy)
 			if dist > radius { continue }
-			// Поворачиваем координаты для полос
+			// Поворот для полос
 			xRot := dx*cosA + dy*sinA
 			yRot := -dx*sinA + dy*cosA
-			_ = xRot // не используется, но оставлено для совместимости (убрали warning)
+			_ = xRot // не используется, но оставлено
 			r, g, b := 40.0, 30.0, 20.0
 			for _, band := range bands {
 				dyBand := yRot - band.pos
@@ -690,9 +688,9 @@ func (pg *PlanetGenerator) generateGas(img *image.RGBA, size int, rng *rand.Rand
 			dSpot := math.Sqrt((float64(x)-spotX)*(float64(x)-spotX) + (float64(y)-spotY)*(float64(y)-spotY))
 			if dSpot < spotR {
 				factor := 1 - dSpot/spotR
-				r = r*(1-factor) + float64(spotCol.R)*factor
-				g = g*(1-factor) + float64(spotCol.G)*factor
-				b = b*(1-factor) + float64(spotCol.B)*factor
+				r = r*(1-factor) + float64(spotColR)*factor
+				g = g*(1-factor) + float64(spotColG)*factor
+				b = b*(1-factor) + float64(spotColB)*factor
 			}
 			clamp := func(v float64) uint8 {
 				if v < 0 { return 0 }
