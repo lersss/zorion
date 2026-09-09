@@ -5,6 +5,7 @@ import { handleCanvasClick, initFlyBtn, initPanZoom, initHover } from './map/eve
 import { animationLoop } from './map/animation.js';
 import { centerOnAgent } from './map/navigation.js';
 import { applyFiltersFromUI, resetFilters, filterState } from './filters.js';
+import { openSystemModal } from './modal/index.js'; // <-- добавлен импорт
 
 // --- Загрузка миров с фильтрацией ---
 async function loadWorldsWithFilters(filters) {
@@ -112,7 +113,6 @@ function init() {
     if (applyBtn) {
         applyBtn.addEventListener('click', async () => {
             applyFiltersFromUI();
-            // Формируем объект фильтров из filterState
             const filters = {};
             if (filterState.hasPlanets) filters.hasPlanets = true;
             if (filterState.hasLife) filters.hasLife = true;
@@ -138,7 +138,6 @@ function init() {
     if (resetBtn) {
         resetBtn.addEventListener('click', async () => {
             resetFilters();
-            // Сброс UI
             document.getElementById('filter-has-planets').checked = false;
             document.getElementById('filter-life').checked = false;
             document.getElementById('filter-habitable').checked = false;
@@ -157,7 +156,6 @@ function init() {
         });
     }
 
-    // Первоначальная загрузка без фильтров
     loadAllData(null).then(() => {
         animationLoop();
     });
