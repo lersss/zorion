@@ -5,8 +5,6 @@ import { initEvents } from './events.js';
 import { clearTextureCache } from './textures.js';
 import { getStarColor, getStarSize } from './utils.js';
 
-// Инициализация генератора текстур больше не нужна (серверная генерация)
-
 export function openSystemModal(worldId, worldName, spectralClass) {
     const token = localStorage.getItem('token');
     if (!token) {

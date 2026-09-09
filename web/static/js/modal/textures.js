@@ -1,34 +1,34 @@
 // web/static/js/modal/textures.js
-
 const textureCache = new Map();
 
 export function getPlanetTexture(planet, spectralClass, sizeMultiplier) {
     const key = `planet_${planet.id || planet.orbit_index}_${spectralClass}`;
-    if (textureCache.has(key)) return textureCache.get(key);
+    if (textureCache.has(key)) {
+        return textureCache.get(key);
+    }
 
-    // Параметры для запроса
     const seed = planet.id ? hashStringToNumber(planet.id) : Date.now() + planet.orbit_index;
     const climateId = getClimateId(planet);
     const radius = Math.min(30, 15 + (planet.size || 10) * 1.2);
 
-    // Запрашиваем изображение с сервера
     const url = `/api/planet-image?seed=${seed}&starType=${spectralClass}&climateId=${climateId}&radius=${radius}`;
 
-    // Используем fetch и создаём Image
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.src = url;
+    const promise = new Promise((resolve, reject) => {
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load planet image'));
+        img.src = url;
+    });
 
-    // Кешируем изображение
-    textureCache.set(key, img);
-    return img;
+    textureCache.set(key, promise);
+    return promise;
 }
 
 export function clearTextureCache() {
     textureCache.clear();
 }
 
-// Вспомогательные функции (нужно их импортировать или определить здесь)
 function hashStringToNumber(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
