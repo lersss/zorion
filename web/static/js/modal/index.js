@@ -2,11 +2,10 @@
 import { modalState, resetState } from './state.js';
 import { drawSystem } from './render.js';
 import { initEvents } from './events.js';
-import { initTextureGenerator, clearTextureCache } from './textures.js';
+import { clearTextureCache } from './textures.js';
 import { getStarColor, getStarSize } from './utils.js';
 
-// Инициализируем генератор текстур при загрузке модуля
-await initTextureGenerator();
+// Инициализация генератора текстур больше не нужна (серверная генерация)
 
 export function openSystemModal(worldId, worldName, spectralClass) {
     const token = localStorage.getItem('token');
@@ -198,7 +197,7 @@ function renderModal(worldName, spectralClass, planets) {
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
-    // Закрытие по клику на оверлей (вне модалки)
+    // Закрытие по клику на оверлей
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) closeModal();
     });
@@ -208,7 +207,6 @@ function renderModal(worldName, spectralClass, planets) {
     const width = rect.width;
     const height = rect.height;
 
-    // Сохраняем в состоянии
     modalState.canvasWidth = width;
     modalState.canvasHeight = height;
     modalState.starRadius = starRadius;
@@ -225,10 +223,10 @@ function renderModal(worldName, spectralClass, planets) {
         drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
     });
 
-    // Инициализация событий (зум, панорамирование, ховер)
+    // Инициализация событий
     initEvents(canvas, spectralClass, planets, starRadius, starColor, width, height);
 
-    // Resize observer для адаптации
+    // Resize observer
     const resizeObserver = new ResizeObserver(() => {
         const newRect = canvasWrapper.getBoundingClientRect();
         modalState.canvasWidth = newRect.width;
@@ -244,7 +242,7 @@ function closeModal() {
     resetState();
 }
 
-// Добавляем стиль анимации (если ещё нет)
+// Добавляем стиль анимации
 if (!document.getElementById('modal-fade-style')) {
     const style = document.createElement('style');
     style.id = 'modal-fade-style';
@@ -257,5 +255,4 @@ if (!document.getElementById('modal-fade-style')) {
     document.head.appendChild(style);
 }
 
-// Экспортируем функцию глобально для вызова из map/events.js
 window.openSystemModal = openSystemModal;
