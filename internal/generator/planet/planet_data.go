@@ -357,32 +357,23 @@ func (g *Generator) generateOceanicPlanet(worldID string, orbitIndex int, spectr
 	if name == "" {
 		name = "Океаническая-" + uuid.New().String()[:8]
 	}
-	// Поверхность: песчаная или глинистая
 	surfaces := []string{"песчаная", "глинистая"}
 	surface := surfaces[g.rng.Intn(len(surfaces))]
-	// Гидросфера: океаны
 	hydrosphere := "океаны"
-	// Атмосфера: азотно-кислородная или плотная
 	atmospheres := []string{"азотно-кислородная", "плотная"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-	// Размер и масса (0.8–2.0 R⊕, 0.5–3.0 M⊕)
 	size := 0.8 + g.rng.Float64()*1.2
 	mass := 0.5 + g.rng.Float64()*2.5
-	// Температура: 0–100 °C -> 273–373 K
 	temp := 273 + g.rng.Float64()*100
-	// Вода: почти вся поверхность
 	waterPercent := 70 + g.rng.Float64()*29
-	// Жизнь: вероятна
 	life := g.rng.Float64() < 0.7
-	habitable := life // для океанических планет обитаемость = наличие жизни
-	// Ресурсы: органические и минералы
+	habitable := life
 	resources := map[string]float64{
 		"минералы": 0.3 + g.rng.Float64()*0.5,
 		"энергия":  0.1 + g.rng.Float64()*0.3,
 		"органика": 0.6 + g.rng.Float64()*0.4,
 		"редкие":   0.1 + g.rng.Float64()*0.2,
 	}
-	// Население и политика (если есть жизнь)
 	var population int64 = 0
 	political := "нет"
 	if life {
@@ -398,6 +389,7 @@ func (g *Generator) generateOceanicPlanet(worldID string, orbitIndex int, spectr
 		"size":              size,
 		"mass":              mass,
 		"atmosphere":        atmosphere,
+		"hydrosphere":       hydrosphere,
 		"temperature":       temp,
 		"water_percent":     waterPercent,
 		"habitable":         habitable,
@@ -425,29 +417,22 @@ func (g *Generator) generateRadioactivePlanet(worldID string, orbitIndex int, sp
 	if name == "" {
 		name = "Радиоактивная-" + uuid.New().String()[:8]
 	}
-	// Поверхность: металлическая или реголитовая
 	surfaces := []string{"металлическая", "реголитовая"}
 	surface := surfaces[g.rng.Intn(len(surfaces))]
-	// Атмосфера: плотная или ядовитая
 	atmospheres := []string{"плотная", "ядовитая"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-	// Размер и масса (как у скалистых)
 	size := 0.5 + g.rng.Float64()*14.5
 	mass := 0.1 + g.rng.Float64()*19.9
-	// Температура: высокая из-за внутреннего нагрева
 	temp := 300 + g.rng.Float64()*400
-	// Вода: маловероятна
 	waterPercent := 0.0
 	if g.rng.Float64() < 0.1 {
 		waterPercent = g.rng.Float64() * 20
 	}
-	// Жизнь: маловероятна (микробная)
 	life := false
 	if g.rng.Float64() < 0.05 {
 		life = true
 	}
 	habitable := false
-	// Ресурсы: много редких и энергии
 	resources := map[string]float64{
 		"минералы": 0.2 + g.rng.Float64()*0.3,
 		"энергия":  0.7 + g.rng.Float64()*0.3,
@@ -471,7 +456,7 @@ func (g *Generator) generateRadioactivePlanet(worldID string, orbitIndex int, sp
 		"moons":             int(size / 8),
 		"description":       description,
 		"development_level": 0.0,
-		"radioactive":       true, // маркер для классификации
+		"radioactive":       true,
 	}
 	dataJSON, _ := json.Marshal(data)
 	return &PlanetData{
