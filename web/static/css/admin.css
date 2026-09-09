@@ -254,3 +254,14 @@ table tr:hover { background: #1a1a2e; }
     .stat-grid { flex-direction: column; }
     .admin-tabs button { flex: 1; text-align: center; padding: 8px 4px; font-size: 0.8rem; }
 }
+/* Сортировка в статистике */
+.stats-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.stats-table th.sortable:hover {
+    color: #f1f5f9;
+}
+.anomaly-high { color: #f87171; }
+.anomaly-medium { color: #fbbf24; }
+.anomaly-low { color: #fcd34d; }
