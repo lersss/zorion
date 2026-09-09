@@ -1,3 +1,4 @@
+// internal/handlers/admin_stats.go
 package handlers
 
 import (
@@ -6,14 +7,13 @@ import (
 	"net/http"
 )
 
-// PlanetStats содержит агрегированную статистику по планетам
 type PlanetStats struct {
 	TotalWorlds       int                      `json:"total_worlds"`
 	WorldsWithPlanets int                      `json:"worlds_with_planets"`
 	TotalPlanets      int                      `json:"total_planets"`
 	PlanetsByType     map[string]int           `json:"planets_by_type"`
 	PlanetsBySpectral map[string]map[string]int `json:"planets_by_spectral"`
-	GameDesignTypes   map[string]int           `json:"game_design_types"` // новый раздел
+	GameDesignTypes   map[string]int           `json:"game_design_types"`
 	HabitableCount    int                      `json:"habitable_count"`
 	LifeCount         int                      `json:"life_count"`
 	AvgSize           float64                  `json:"avg_size"`
@@ -32,7 +32,6 @@ type Anomaly struct {
 	Severity    string  `json:"severity"` // low, medium, high
 }
 
-// GetPlanetStatsHandler возвращает детальную статистику по планетам
 func (h *AdminHandlers) GetPlanetStatsHandler(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.calculatePlanetStats()
 	if err != nil {
@@ -52,7 +51,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		Anomalies:          []Anomaly{},
 	}
 
-	// Получаем все миры
 	rows, err := h.db.Query(`
 		SELECT id, coord_x, coord_y, spectral_class, temperature
 		FROM worlds
@@ -83,7 +81,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	}
 	stats.TotalWorlds = len(worlds)
 
-	// Получаем все планеты
 	planetRows, err := h.db.Query(`
 		SELECT world_id, data
 		FROM planets
@@ -112,7 +109,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	}
 	stats.TotalPlanets = len(planets)
 
-	// Считаем планеты с жизнью и обитаемые
 	var totalSize, totalMass, totalTemp, totalWater float64
 	var totalPopulation int64
 	var sizeCount, massCount, tempCount, waterCount, popCount int
@@ -121,11 +117,9 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	for _, p := range planets {
 		worldsWithPlanets[p.WorldID] = true
 
-		// --- Поверхность (type) ---
 		pType := getString(p.Data, "type")
 		if pType != "" {
 			stats.PlanetsByType[pType]++
-			// По спектральному классу
 			spectral := ""
 			for _, w := range worlds {
 				if w.ID == p.WorldID {
@@ -141,8 +135,7 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 			}
 		}
 
-		// --- Геймдизайнерский тип ---
-		surface := pType // type = surface
+		surface := pType
 		hydrosphere := getString(p.Data, "hydrosphere")
 		atmosphere := getString(p.Data, "atmosphere")
 		temperature := getFloat(p.Data, "temperature")
@@ -150,10 +143,9 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		habitable := getBool(p.Data, "habitable")
 		life := getBool(p.Data, "life")
 
-		gdType := classifyGameDesignType(surface, hydrosphere, atmosphere, temperature, waterPercent, habitable, life)
+		gdType := classifyGameDesignType(surface, hydrosphere, atmosphere, temperature, waterPercent, habitable, life, p.Data)
 		stats.GameDesignTypes[gdType]++
 
-		// --- Жизнь и обитаемость ---
 		if life {
 			stats.LifeCount++
 		}
@@ -161,7 +153,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 			stats.HabitableCount++
 		}
 
-		// --- Средние значения ---
 		if size, ok := p.Data["size"].(float64); ok {
 			totalSize += size
 			sizeCount++
@@ -201,7 +192,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		stats.AvgPopulation = totalPopulation / int64(popCount)
 	}
 
-	// Аномалии
 	noPlanets := stats.TotalWorlds - stats.WorldsWithPlanets
 	if float64(noPlanets)/float64(stats.TotalWorlds) > 0.5 {
 		stats.Anomalies = append(stats.Anomalies, Anomaly{
@@ -220,7 +210,8 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		"газовый гигант":  0.15,
 		"океаническая":    0.1,
 		"вулканическая":   0.1,
-		"скалистая":       0.15,
+		"скалистая":       0.1,
+		"радиоактивная":   0.02,
 	}
 	if stats.TotalPlanets > 0 {
 		for gdType, count := range stats.GameDesignTypes {
@@ -251,7 +242,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	return stats, nil
 }
 
-// --- Вспомогательные функции для извлечения данных ---
 func getString(data map[string]interface{}, key string) string {
 	if val, ok := data[key].(string); ok {
 		return val
@@ -273,44 +263,45 @@ func getBool(data map[string]interface{}, key string) bool {
 	return false
 }
 
-// classifyGameDesignType классифицирует планету по геймдизайнерским типам
-func classifyGameDesignType(surface, hydrosphere, atmosphere string, temperature, waterPercent float64, habitable, life bool) string {
-	// Газовый гигант
+func classifyGameDesignType(surface, hydrosphere, atmosphere string, temperature, waterPercent float64, habitable, life bool, data map[string]interface{}) string {
+	// Проверка на радиоактивную планету
+	if radioactive, ok := data["radioactive"].(bool); ok && radioactive {
+		return "радиоактивная"
+	}
+	if (surface == "металлическая" || surface == "реголитовая") && (atmosphere == "плотная" || atmosphere == "ядовитая") {
+		if res, ok := data["resources"].(map[string]interface{}); ok {
+			if rare, ok := res["редкие"].(float64); ok && rare > 0.8 {
+				return "радиоактивная"
+			}
+		}
+	}
+
 	if surface == "газовый гигант" {
 		return "газовый гигант"
 	}
-	// Вулканическая
 	if surface == "вулканическая" || surface == "лавовая" {
 		return "вулканическая"
 	}
-	// Ледяная
 	if surface == "ледяная" || temperature < 200 {
 		return "ледяная"
 	}
-	// Пустынная
 	if surface == "пустынная" || (surface == "песчаная" && waterPercent < 20) {
 		return "пустынная"
 	}
-	// Океаническая
 	if (surface == "песчаная" || surface == "глинистая") && hydrosphere == "океаны" {
 		return "океаническая"
 	}
-	// Землеподобная
-	if surface == "скалистая" && hydrosphere == "океаны" && habitable && life {
+	if surface == "скалистая" && hydrosphere == "океаны" && habitable {
 		return "землеподобная"
 	}
-	// Реголитовая
 	if surface == "реголитовая" {
 		return "реголитовая"
 	}
-	// Органик (если поверхность органик, но не подошла под другие)
 	if surface == "органик" {
 		return "органик"
 	}
-	// Металлическая
 	if surface == "металлическая" {
 		return "металлическая"
 	}
-	// По умолчанию — скалистая
 	return "скалистая"
 }
