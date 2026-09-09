@@ -1,0 +1,193 @@
+/* Общие */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #0f172a;
+    color: #f0f4fa;
+    font-family: system-ui, sans-serif;
+    padding: 1.5rem;
+}
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { font-size: 2rem; margin-bottom: 1rem; }
+
+/* Карточки */
+.card {
+    background: #1e293b;
+    padding: 1rem 1.5rem;
+    border-radius: 1rem;
+    border: 1px solid #334155;
+    margin-bottom: 1rem;
+}
+.card h2 {
+    font-size: 1.1rem;
+    margin-bottom: 0.6rem;
+    color: #60a5fa;
+}
+
+/* Строки форм */
+.row, .compact-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: end;
+}
+.row label, .compact-row label {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    display: block;
+    margin-bottom: 0.1rem;
+}
+.row input, .row select,
+.compact-row input, .compact-row select {
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.4rem;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f0f4fa;
+    width: 130px;
+    font-size: 0.85rem;
+}
+.compact-row input { width: 90px; }
+
+/* Кнопки */
+.btn, .row button, .compact-row button {
+    background: #3b82f6;
+    border: none;
+    color: white;
+    padding: 0.3rem 1rem;
+    border-radius: 2rem;
+    cursor: pointer;
+    transition: 0.2s;
+    font-size: 0.85rem;
+    display: inline-block;
+    text-align: center;
+    line-height: 1.5;
+}
+.btn:hover, .row button:hover, .compact-row button:hover {
+    background: #2563eb;
+}
+.btn.danger { background: #ef4444; }
+.btn.danger:hover { background: #dc2626; }
+.btn.success { background: #22c55e; }
+.btn.success:hover { background: #16a34a; }
+.btn.secondary { background: #475569; }
+.btn.secondary:hover { background: #334155; }
+.btn-small {
+    padding: 0.1rem 0.5rem;
+    font-size: 0.7rem;
+    border-radius: 0.3rem;
+    border: none;
+    cursor: pointer;
+    background: #ef4444;
+    color: white;
+}
+.btn-small:hover { background: #dc2626; }
+
+/* Результаты */
+.result {
+    margin-top: 0.3rem;
+    color: #4ade80;
+    font-size: 0.85rem;
+}
+.error { color: #f87171; }
+
+/* Таблицы */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+}
+th, td {
+    border: 1px solid #334155;
+    padding: 0.3rem 0.5rem;
+    text-align: left;
+}
+th { background: #1e293b; }
+
+/* Пароль */
+.password-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+.password-form input {
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.4rem;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f0f4fa;
+    width: 200px;
+}
+
+/* Пагинация */
+.pagination {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-top: 0.3rem;
+    flex-wrap: wrap;
+}
+.pagination button {
+    background: #475569;
+    border: none;
+    color: white;
+    padding: 0.1rem 0.5rem;
+    border-radius: 0.3rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+.pagination button:hover { background: #334155; }
+.pagination span { color: #94a3b8; font-size: 0.8rem; }
+
+/* Поиск */
+.search-form {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.3rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.search-form input {
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.4rem;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f0f4fa;
+    width: 180px;
+}
+
+/* Прогресс-бары */
+.progress-container {
+    margin-top: 0.3rem;
+    display: none;
+}
+.progress-text {
+    color: #94a3b8;
+    font-size: 0.8rem;
+}
+.progress-bar {
+    width: 100%;
+    height: 16px;
+    background: #0f172a;
+    border-radius: 0.3rem;
+    border: 1px solid #334155;
+}
+.progress-bar::-webkit-progress-bar {
+    background: #0f172a;
+    border-radius: 0.3rem;
+}
+.progress-bar::-webkit-progress-value {
+    background: #22c55e;
+    border-radius: 0.3rem;
+}
+
+/* Статистика */
+.stat-item {
+    font-size: 0.95rem;
+    margin-right: 1rem;
+}
+.stat-item span {
+    color: #60a5fa;
+    font-weight: bold;
+}

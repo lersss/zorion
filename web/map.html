@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zorion — Карта миров</title>
+    <link rel="stylesheet" href="/static/css/map.css">
+</head>
+<body>
+    <div id="header">
+        <h1>🗺️ Карта миров</h1>
+        <div>
+            <span id="currentWorldLabel" style="margin-right:1rem;color:#94a3b8;">Текущий мир: <strong id="currentWorldName">—</strong></span>
+            <button onclick="location.href='/'">🏠 Дашборд</button>
+            <button onclick="location.href='/assignments'">📋 Контракты</button>
+        </div>
+    </div>
+    <div id="canvas-wrapper">
+        <canvas id="mapCanvas"></canvas>
+        <div id="loading">⏳ Загрузка данных...</div>
+        <div id="tooltip">
+            <h3 id="tooltipName">—</h3>
+            <p id="tooltipType">Тип: —</p>
+            <p id="tooltipLevel">Уровень: —</p>
+            <button id="tooltipFlyBtn">🚀 Лететь</button>
+        </div>
+        <div id="status-bar">Загрузка...</div>
+        <div id="zoom-controls">
+            <button id="zoomInBtn" title="Приблизить">➕</button>
+            <button id="zoomOutBtn" title="Отдалить">➖</button>
+            <button id="centerBtn" title="Найти меня">🎯</button>
+            <div id="zoom-info">100%</div>
+        </div>
+    </div>
+    <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

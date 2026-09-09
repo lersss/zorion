@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админка Zorion</title>
+    <link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body>
+<div class="container">
+    <h1>🌍 Админка Zorion</h1>
+
+    <!-- Статистика -->
+    <div class="card">
+        <div class="compact-row" style="gap: 1rem;">
+            <div class="stat-item">Миры: <span id="statsWorlds">—</span></div>
+            <div class="stat-item">Планеты: <span id="statsPlanets">—</span></div>
+            <button class="btn secondary" onclick="loadStats()">Обновить</button>
+        </div>
+    </div>
+
+    <!-- Пароль -->
+    <div class="card">
+        <div class="password-form">
+            <label style="color:#94a3b8; font-size:0.85rem;">Пароль администратора:</label>
+            <input type="password" id="adminPassword" placeholder="Введите пароль">
+            <button class="btn" onclick="setPassword()">Сохранить</button>
+        </div>
+    </div>
+
+    <!-- Создание мира -->
+    <div class="card">
+        <h2>➕ Создать мир</h2>
+        <div class="compact-row">
+            <div><label>Название</label><input type="text" id="worldName" placeholder="Название"></div>
+            <div><label>X</label><input type="number" id="coordX" placeholder="0"></div>
+            <div><label>Y</label><input type="number" id="coordY" placeholder="0"></div>
+            <button class="btn" onclick="createWorld()">Создать</button>
+        </div>
+        <div id="createResult" class="result"></div>
+    </div>
+
+    <!-- Генерация вселенной -->
+    <div class="card">
+        <h2>🌌 Генерация вселенной</h2>
+        <div class="compact-row">
+            <div><label>Миры</label><input type="number" id="genWorlds" value="1000"></div>
+            <div><label>Кластеры</label><input type="number" id="genClusters" value="20"></div>
+            <div><label>MapSize</label><input type="number" id="genMapSize" value="8000" step="10"></div>
+            <div><label>minDist</label><input type="number" id="genMinDist" value="150" step="1"></div>
+            <div><label>Радиус кластера</label><input type="number" id="genClusterRadius" value="1200" step="5"></div>
+            <div><label>Расст. между кластерами</label><input type="number" id="genClusterSpacing" value="200" step="10"></div>
+            <div><label>Выбросы %</label><input type="number" id="genOutlierPercent" value="30" step="1"></div>
+            <button class="btn success" onclick="generateUniverse()">Сгенерировать</button>
+            <button class="btn danger" onclick="cancelGeneration('generate_universe')" id="cancelUniverseBtn" style="display:none;">Остановить</button>
+        </div>
+        <div id="genResult" class="result"></div>
+        <div id="genProgress" class="progress-container">
+            <span class="progress-text" id="genProgressText">0 из 0</span>
+            <progress id="genProgressBar" class="progress-bar" value="0" max="100"></progress>
+        </div>
+    </div>
+
+    <!-- Генерация планет -->
+    <div class="card">
+        <h2>🌍 Генерация планет</h2>
+        <div class="compact-row">
+            <button class="btn success" onclick="generatePlanets()">Сгенерировать планеты</button>
+            <button class="btn danger" onclick="cancelGeneration('generate_planets')" id="cancelPlanetsBtn" style="display:none;">Остановить</button>
+        </div>
+        <div id="planetResult" class="result"></div>
+        <div id="planetProgress" class="progress-container">
+            <span class="progress-text" id="planetProgressText">0 из 0</span>
+            <progress id="planetProgressBar" class="progress-bar" value="0" max="100"></progress>
+        </div>
+    </div>
+
+    <!-- Генерация фракций -->
+    <div class="card">
+        <h2>🏛️ Генерация фракций</h2>
+        <div class="compact-row">
+            <button class="btn success" onclick="generateFactions()">Сгенерировать фракции</button>
+            <button class="btn danger" onclick="cancelGeneration('generate_factions')" id="cancelFactionsBtn" style="display:none;">Остановить</button>
+        </div>
+        <div id="factionResult" class="result"></div>
+        <div id="factionProgress" class="progress-container">
+            <span class="progress-text" id="factionProgressText">0 из 0</span>
+            <progress id="factionProgressBar" class="progress-bar" value="0" max="100"></progress>
+        </div>
+    </div>
+
+    <!-- Очистка -->
+    <div class="card">
+        <h2>🗑️ Очистка вселенной</h2>
+        <button class="btn danger" onclick="clearUniverse()">Удалить все миры</button>
+        <div id="clearResult" class="result"></div>
+    </div>
+
+    <!-- Список миров -->
+    <div class="card">
+        <h2>🌍 Список миров</h2>
+        <div class="search-form">
+            <input type="text" id="searchInput" placeholder="Поиск по названию..." onchange="loadWorlds(1)">
+            <button class="btn" onclick="loadWorlds(1)">Поиск</button>
+            <select id="limitSelect" onchange="loadWorlds(1)">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+            </select>
+            <label style="color:#94a3b8; font-size:0.8rem;">записей</label>
+        </div>
+        <div id="worldsContainer">
+            <table>
+                <thead><tr><th>ID</th><th>Название</th><th>X</th><th>Y</th><th>Действие</th></tr></thead>
+                <tbody id="worldsBody">
+                    <tr><td colspan="5" style="text-align:center;color:#94a3b8;">Загрузка...</td></tr>
+                </tbody>
+            </table>
+            <div class="pagination" id="paginationControls"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Глобальные ---
+    let adminPassword = localStorage.getItem('adminPassword') || '';
+    let currentPage = 1, currentLimit = 50, currentSearch = '';
+    let pollIntervals = {};
+
+    // --- Авторизация ---
+    function setPassword() {
+        const pwd = document.getElementById('adminPassword').value;
+        if (pwd) {
+            adminPassword = pwd;
+            localStorage.setItem('adminPassword', pwd);
+            alert('Пароль сохранён');
+            loadStats();
+            loadWorlds(1);
+        }
+    }
+
+    async function fetchWithAuth(url, options = {}) {
+        const headers = options.headers || {};
+        headers['X-Admin-Password'] = adminPassword;
+        const res = await fetch(url, { ...options, headers });
+        if (res.status === 401) {
+            alert('Неверный пароль администратора');
+            throw new Error('Unauthorized');
+        }
+        return res;
+    }
+
+    // --- Статистика ---
+    async function loadStats() {
+        try {
+            const res = await fetchWithAuth('/admin/stats');
+            const data = await res.json();
+            document.getElementById('statsWorlds').textContent = data.worlds || 0;
+            document.getElementById('statsPlanets').textContent = data.planets || 0;
+        } catch (e) { console.error(e); }
+    }
+
+    // --- Список миров ---
+    async function loadWorlds(page) {
+        if (page) currentPage = page;
+        currentLimit = parseInt(document.getElementById('limitSelect').value);
+        currentSearch = document.getElementById('searchInput').value;
+
+        try {
+            const url = `/admin/worlds?page=${currentPage}&limit=${currentLimit}&search=${encodeURIComponent(currentSearch)}`;
+            const res = await fetchWithAuth(url);
+            const data = await res.json();
+
+            const tbody = document.getElementById('worldsBody');
+            tbody.innerHTML = '';
+            if (data.data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;">Нет миров</td></tr>';
+            } else {
+                data.data.forEach(w => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${w.id}</td>
+                        <td>${w.name}</td>
+                        <td>${w.coord_x}</td>
+                        <td>${w.coord_y}</td>
+                        <td><button class="btn-small" onclick="deleteWorld('${w.id}')">Удалить</button></td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+
+            const pagination = document.getElementById('paginationControls');
+            pagination.innerHTML = '';
+            if (data.total > 0) {
+                const totalPages = Math.ceil(data.total / data.limit);
+                const prev = document.createElement('button');
+                prev.textContent = '◀';
+                prev.onclick = () => loadWorlds(Math.max(1, currentPage - 1));
+                pagination.appendChild(prev);
+                const span = document.createElement('span');
+                span.textContent = `Страница ${currentPage} из ${totalPages}`;
+                pagination.appendChild(span);
+                const next = document.createElement('button');
+                next.textContent = '▶';
+                next.onclick = () => loadWorlds(Math.min(totalPages, currentPage + 1));
+                pagination.appendChild(next);
+            }
+        } catch (e) {
+            console.error(e);
+            document.getElementById('worldsBody').innerHTML = '<tr><td colspan="5" style="text-align:center;color:#f87171;">Ошибка загрузки</td></tr>';
+        }
+    }
+
+    async function deleteWorld(id) {
+        if (!confirm('Удалить мир?')) return;
+        try {
+            const res = await fetchWithAuth('/admin/worlds/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id })
+            });
+            if (res.ok) { alert('Мир удалён'); loadStats(); loadWorlds(currentPage); }
+            else { const text = await res.text(); alert('Ошибка: ' + text); }
+        } catch (e) { alert('Ошибка: ' + e.message); }
+    }
+
+    async function createWorld() {
+        const name = document.getElementById('worldName').value.trim();
+        const x = parseFloat(document.getElementById('coordX').value);
+        const y = parseFloat(document.getElementById('coordY').value);
+        if (!name || isNaN(x) || isNaN(y)) {
+            document.getElementById('createResult').textContent = '❌ Заполните все поля';
+            return;
+        }
+        try {
+            const res = await fetchWithAuth('/admin/worlds/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, coord_x: x, coord_y: y })
+            });
+            if (res.ok) { document.getElementById('createResult').textContent = '✅ Мир создан'; loadStats(); loadWorlds(1); }
+            else { const text = await res.text(); document.getElementById('createResult').textContent = '❌ ' + text; }
+        } catch (e) { document.getElementById('createResult').textContent = '❌ ' + e.message; }
+    }
+
+    // --- Генерация вселенной ---
+    async function generateUniverse() {
+        const worlds = parseInt(document.getElementById('genWorlds').value);
+        const clusters = parseInt(document.getElementById('genClusters').value);
+        const mapSize = parseInt(document.getElementById('genMapSize').value);
+        const minDist = parseInt(document.getElementById('genMinDist').value);
+        const clusterRadius = parseInt(document.getElementById('genClusterRadius').value);
+        const clusterSpacing = parseInt(document.getElementById('genClusterSpacing').value);
+        const outlierPercent = parseInt(document.getElementById('genOutlierPercent').value);
+        if (isNaN(worlds) || isNaN(clusters) || worlds <= 0 || clusters <= 0 || isNaN(mapSize) || mapSize <= 0 || isNaN(minDist) || minDist <= 0 || isNaN(clusterRadius) || clusterRadius <= 0 || isNaN(clusterSpacing) || clusterSpacing <= 0 || isNaN(outlierPercent) || outlierPercent < 0) {
+            document.getElementById('genResult').textContent = '❌ Введите корректные числа';
+            return;
+        }
+        if (!confirm(`Сгенерировать ${worlds} миров в ${clusters} кластерах?`)) return;
+
+        document.getElementById('genResult').textContent = '⏳ Генерация запущена...';
+        document.getElementById('genProgress').style.display = 'block';
+        document.getElementById('genProgressBar').value = 0;
+        document.getElementById('genProgressText').textContent = '0 из ' + worlds;
+        document.getElementById('cancelUniverseBtn').style.display = 'inline-block';
+
+        try {
+            const res = await fetchWithAuth('/admin/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    world_count: worlds,
+                    cluster_count: clusters,
+                    map_size: mapSize,
+                    min_dist: minDist,
+                    cluster_radius: clusterRadius,
+                    cluster_spacing: clusterSpacing,
+                    outlier_percent: outlierPercent
+                })
+            });
+            if (!res.ok) {
+                const text = await res.text();
+                document.getElementById('genResult').textContent = '❌ Ошибка: ' + text;
+                document.getElementById('genProgress').style.display = 'none';
+                document.getElementById('cancelUniverseBtn').style.display = 'none';
+                return;
+            }
+            if (pollIntervals['universe']) clearInterval(pollIntervals['universe']);
+            pollIntervals['universe'] = setInterval(() => pollJob('generate_universe', 'genProgress', 'genResult', 'cancelUniverseBtn'), 1500);
+        } catch (e) {
+            document.getElementById('genResult').textContent = '❌ ' + e.message;
+            document.getElementById('genProgress').style.display = 'none';
+            document.getElementById('cancelUniverseBtn').style.display = 'none';
+        }
+    }
+
+    // --- Генерация планет ---
+    async function generatePlanets() {
+        if (!confirm('Сгенерировать планеты для всех миров?')) return;
+        document.getElementById('planetResult').textContent = '⏳ Генерация запущена...';
+        document.getElementById('planetProgress').style.display = 'block';
+        document.getElementById('planetProgressBar').value = 0;
+        document.getElementById('planetProgressText').textContent = 'Подготовка...';
+        document.getElementById('cancelPlanetsBtn').style.display = 'inline-block';
+
+        try {
+            const res = await fetchWithAuth('/admin/generate-planets', { method: 'POST' });
+            if (!res.ok) {
+                const text = await res.text();
+                document.getElementById('planetResult').textContent = '❌ Ошибка: ' + text;
+                document.getElementById('planetProgress').style.display = 'none';
+                document.getElementById('cancelPlanetsBtn').style.display = 'none';
+                return;
+            }
+            if (pollIntervals['planets']) clearInterval(pollIntervals['planets']);
+            pollIntervals['planets'] = setInterval(() => pollJob('generate_planets', 'planetProgress', 'planetResult', 'cancelPlanetsBtn'), 1500);
+        } catch (e) {
+            document.getElementById('planetResult').textContent = '❌ ' + e.message;
+            document.getElementById('planetProgress').style.display = 'none';
+            document.getElementById('cancelPlanetsBtn').style.display = 'none';
+        }
+    }
+
+    // --- Генерация фракций ---
+    async function generateFactions() {
+        if (!confirm('Сгенерировать фракции для всех обитаемых планет?')) return;
+        document.getElementById('factionResult').textContent = '⏳ Генерация запущена...';
+        document.getElementById('factionProgress').style.display = 'block';
+        document.getElementById('factionProgressBar').value = 0;
+        document.getElementById('factionProgressText').textContent = 'Подготовка...';
+        document.getElementById('cancelFactionsBtn').style.display = 'inline-block';
+
+        try {
+            const res = await fetchWithAuth('/admin/generate-factions', { method: 'POST' });
+            if (!res.ok) {
+                const text = await res.text();
+                document.getElementById('factionResult').textContent = '❌ Ошибка: ' + text;
+                document.getElementById('factionProgress').style.display = 'none';
+                document.getElementById('cancelFactionsBtn').style.display = 'none';
+                return;
+            }
+            if (pollIntervals['factions']) clearInterval(pollIntervals['factions']);
+            pollIntervals['factions'] = setInterval(() => pollJob('generate_factions', 'factionProgress', 'factionResult', 'cancelFactionsBtn'), 1500);
+        } catch (e) {
+            document.getElementById('factionResult').textContent = '❌ ' + e.message;
+            document.getElementById('factionProgress').style.display = 'none';
+            document.getElementById('cancelFactionsBtn').style.display = 'none';
+        }
+    }
+
+    // --- Общий опрос статуса ---
+    async function pollJob(jobType, progressId, resultId, cancelBtnId) {
+        try {
+            const res = await fetchWithAuth(`/admin/generate-status?job=${jobType}`);
+            const data = await res.json();
+            const progress = data.processed || 0;
+            const total = data.total || 0;
+            const status = data.status || 'running';
+
+            const textEl = document.getElementById(progressId + 'Text');
+            const barEl = document.getElementById(progressId + 'Bar');
+            if (textEl) textEl.textContent = total > 0 ? `${progress} из ${total}` : 'Подготовка...';
+            if (barEl) {
+                const percent = total > 0 ? (progress / total * 100) : 0;
+                barEl.value = percent;
+            }
+
+            const cancelBtn = document.getElementById(cancelBtnId);
+            if (cancelBtn) {
+                cancelBtn.style.display = (status === 'running') ? 'inline-block' : 'none';
+            }
+
+            if (status === 'done' || status === 'error' || status === 'canceled') {
+                clearInterval(pollIntervals[jobType]);
+                delete pollIntervals[jobType];
+                document.getElementById(progressId).style.display = 'none';
+                if (cancelBtn) cancelBtn.style.display = 'none';
+                const resultEl = document.getElementById(resultId);
+                if (status === 'done') {
+                    resultEl.textContent = `✅ Готово! (${total} объектов)`;
+                    if (jobType === 'generate_universe') {
+                        loadStats();
+                        loadWorlds(1);
+                    } else if (jobType === 'generate_planets') {
+                        loadStats();
+                    }
+                } else if (status === 'canceled') {
+                    resultEl.textContent = `⏹️ Остановлено пользователем`;
+                } else if (status === 'error') {
+                    resultEl.textContent = `❌ Ошибка: ${data.error || 'неизвестная'}`;
+                }
+            }
+        } catch (e) {
+            console.error('Poll error:', e);
+        }
+    }
+
+    // --- Отмена генерации ---
+    async function cancelGeneration(jobType) {
+        if (!confirm(`Остановить генерацию?`)) return;
+        try {
+            const res = await fetchWithAuth(`/admin/generate-cancel?job=${jobType}`, { method: 'POST' });
+            if (res.ok) {
+                alert('Остановка запрошена');
+                const btnId = jobType === 'generate_universe' ? 'cancelUniverseBtn' :
+                              jobType === 'generate_planets' ? 'cancelPlanetsBtn' : 'cancelFactionsBtn';
+                document.getElementById(btnId).style.display = 'none';
+            } else {
+                const text = await res.text();
+                alert('Ошибка: ' + text);
+            }
+        } catch (e) {
+            alert('Ошибка: ' + e.message);
+        }
+    }
+
+    // --- Очистка ---
+    async function clearUniverse() {
+        if (!confirm('Удалить ВСЕ миры?')) return;
+        try {
+            const res = await fetchWithAuth('/admin/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            if (res.ok) { document.getElementById('clearResult').textContent = '✅ Вселенная очищена'; loadStats(); loadWorlds(1); }
+            else { const text = await res.text(); document.getElementById('clearResult').textContent = '❌ Ошибка: ' + text; }
+        } catch (e) { document.getElementById('clearResult').textContent = '❌ ' + e.message; }
+    }
+
+    // --- Инициализация ---
+    loadStats();
+    loadWorlds(1);
+</script>
+</body>
+</html>

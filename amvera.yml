@@ -1,0 +1,11 @@
+name: zorion
+tariffId: "5"
+meta:
+  toolchain:
+    name: docker
+  environment: docker
+build:
+  dockerfile: Dockerfile
+run:
+  persistenceMount: /tmp
+  containerPort: "8080"

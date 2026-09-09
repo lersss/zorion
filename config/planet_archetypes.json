@@ -1,0 +1,109 @@
+{
+  "climates": [
+    {
+      "id": "hot",
+      "name": "Жаркий",
+      "weight": {
+        "O": 0.3,
+        "B": 0.3,
+        "A": 0.25,
+        "F": 0.2,
+        "G": 0.15,
+        "K": 0.1,
+        "M": 0.05
+      },
+      "allowed_surfaces": ["скалистая", "пустынная", "песчаная", "стеклянная"],
+      "allowed_hydrospheres": ["океаны", "озёра", "сухая", "кислотная"],
+      "allowed_atmospheres": ["плотная", "парниковая", "ядовитая", "облачная"],
+      "allowed_biospheres": ["стерильная", "микробная", "грибная"],
+      "temperature_min": 300,
+      "temperature_max": 600,
+      "water_chance": 0.4,
+      "life_chance": 0.1
+    },
+    {
+      "id": "temperate",
+      "name": "Умеренный",
+      "weight": {
+        "O": 0.1,
+        "B": 0.15,
+        "A": 0.25,
+        "F": 0.3,
+        "G": 0.35,
+        "K": 0.3,
+        "M": 0.2
+      },
+      "allowed_surfaces": ["скалистая", "песчаная", "органик", "глинистая"],
+      "allowed_hydrospheres": ["океаны", "озёра", "подлёдная", "сухая"],
+      "allowed_atmospheres": ["азотно-кислородная", "углекислая", "туманная"],
+      "allowed_biospheres": ["растительная", "симбиотическая", "светящаяся", "микробная"],
+      "temperature_min": 220,
+      "temperature_max": 350,
+      "water_chance": 0.7,
+      "life_chance": 0.4
+    },
+    {
+      "id": "cold",
+      "name": "Холодный",
+      "weight": {
+        "O": 0.05,
+        "B": 0.1,
+        "A": 0.15,
+        "F": 0.2,
+        "G": 0.25,
+        "K": 0.35,
+        "M": 0.45
+      },
+      "allowed_surfaces": ["ледяная", "скалистая", "реголитовая"],
+      "allowed_hydrospheres": ["ледяной покров", "подлёдная", "сухая"],
+      "allowed_atmospheres": ["разряженная", "метановая", "азотная"],
+      "allowed_biospheres": ["стерильная", "микробная"],
+      "temperature_min": 50,
+      "temperature_max": 200,
+      "water_chance": 0.3,
+      "life_chance": 0.05
+    },
+    {
+      "id": "extreme",
+      "name": "Экстремальный",
+      "weight": {
+        "O": 0.3,
+        "B": 0.25,
+        "A": 0.2,
+        "F": 0.15,
+        "G": 0.1,
+        "K": 0.1,
+        "M": 0.1
+      },
+      "allowed_surfaces": ["лавовая", "пустынная", "стеклянная", "металлическая"],
+      "allowed_hydrospheres": ["кислотная", "сухая"],
+      "allowed_atmospheres": ["ядовитая", "парниковая", "электрическая"],
+      "allowed_biospheres": ["стерильная"],
+      "temperature_min": 500,
+      "temperature_max": 900,
+      "water_chance": 0.0,
+      "life_chance": 0.0
+    },
+    {
+      "id": "variable",
+      "name": "Изменчивый",
+      "weight": {
+        "O": 0.1,
+        "B": 0.15,
+        "A": 0.2,
+        "F": 0.25,
+        "G": 0.25,
+        "K": 0.2,
+        "M": 0.15
+      },
+      "allowed_surfaces": ["скалистая", "песчаная", "глинистая", "ледяная"],
+      "allowed_hydrospheres": ["озёра", "сухая", "подлёдная"],
+      "allowed_atmospheres": ["облачная", "туманная", "углекислая"],
+      "allowed_biospheres": ["микробная", "грибная", "симбиотическая"],
+      "temperature_min": 150,
+      "temperature_max": 400,
+      "water_chance": 0.5,
+      "life_chance": 0.2
+    }
+  ]
+}
