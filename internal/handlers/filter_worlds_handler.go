@@ -1,3 +1,4 @@
+// internal/handlers/filter_worlds_handler.go
 package handlers
 
 import (
@@ -42,7 +43,6 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 		argCounter++
 	}
 	if resourceCategory != "" {
-		// resources хранится как объект внутри data, например {"минералы": 0.7, "энергия": 0.2}
 		sqlQuery += ` AND EXISTS (
 			SELECT 1 FROM planets p 
 			WHERE p.world_id = w.id 
@@ -62,21 +62,21 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 
 	worlds := []models.World{}
 	for rows.Next() {
-		var w models.World
+		var world models.World
 		if err := rows.Scan(
-			&w.ID,
-			&w.Name,
-			&w.CoordX,
-			&w.CoordY,
-			&w.SpectralClass,
-			&w.Temperature,
-			&w.CreatedAt,
-			&w.UpdatedAt,
+			&world.ID,
+			&world.Name,
+			&world.CoordX,
+			&world.CoordY,
+			&world.SpectralClass,
+			&world.Temperature,
+			&world.CreatedAt,
+			&world.UpdatedAt,
 		); err != nil {
 			http.Error(w, "Scan error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		worlds = append(worlds, w)
+		worlds = append(worlds, world)
 	}
 	if err = rows.Err(); err != nil {
 		http.Error(w, "Rows error: "+err.Error(), http.StatusInternalServerError)
