@@ -2,7 +2,6 @@
 package handlers
 
 import (
-	"encoding/base64"
 	"image/png"
 	"log"
 	"net/http"
@@ -13,9 +12,7 @@ import (
 	"zorion/internal/generator/planet"
 )
 
-// PlanetImageHandler возвращает изображение планеты по параметрам
 func PlanetImageHandler(w http.ResponseWriter, r *http.Request) {
-	// Параметры запроса
 	seedStr := r.URL.Query().Get("seed")
 	starType := r.URL.Query().Get("starType")
 	climateID := r.URL.Query().Get("climateId")
@@ -34,12 +31,10 @@ func PlanetImageHandler(w http.ResponseWriter, r *http.Request) {
 			seed = 0
 		}
 	}
-	// Если seed не задан, используем случайный (но для детерминизма лучше передавать)
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
 
-	// Загружаем генератор (синглтон)
 	gen, err := getPlanetGenerator()
 	if err != nil {
 		log.Printf("❌ Failed to get planet generator: %v", err)
@@ -47,7 +42,6 @@ func PlanetImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Опции для генерации
 	opts := []func(*planet.GenerateOptions){
 		planet.WithRadius(radius),
 		planet.WithSeed(seed),
@@ -59,7 +53,6 @@ func PlanetImageHandler(w http.ResponseWriter, r *http.Request) {
 		opts = append(opts, planet.WithClimateID(climateID))
 	}
 
-	// Генерация
 	cachedPlanet, err := gen.GeneratePlanet(radius, opts...)
 	if err != nil {
 		log.Printf("❌ Failed to generate planet: %v", err)
@@ -67,7 +60,6 @@ func PlanetImageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Кодируем в PNG
 	w.Header().Set("Content-Type", "image/png")
 	if err := png.Encode(w, cachedPlanet.Image); err != nil {
 		log.Printf("❌ Failed to encode image: %v", err)
@@ -76,7 +68,6 @@ func PlanetImageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// planetGeneratorSingleton — ленивая инициализация генератора
 var (
 	planetGenOnce sync.Once
 	planetGen     *planet.PlanetGenerator
@@ -85,7 +76,6 @@ var (
 
 func getPlanetGenerator() (*planet.PlanetGenerator, error) {
 	planetGenOnce.Do(func() {
-		// Загружаем климатические данные из файла
 		const climateFile = "config/planet_archetypes.json"
 		pg, err := planet.NewPlanetGenerator(climateFile,
 			planet.WithCanvasSize(64),
