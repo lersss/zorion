@@ -36,6 +36,7 @@ function openSystemModal(worldId, worldName, spectralClass) {
         return response.json();
     })
     .then(data => {
+        console.log('Planets data:', data); // <- ЛОГ
         renderModal(worldName, spectralClass, data.planets);
     })
     .catch(error => {
@@ -523,12 +524,13 @@ function drawSystem(canvas, spectralClass, planets, starRadius, starColor, width
 
     ctx.restore(); // сброс трансформации
 
-    // ---- МИНИ-КАРТА (поверх всего) ----
+    // ---- МИНИ-КАРТА ----
     drawMiniMap(ctx, cx, cy, maxRadius, finalStarRadius, planets, width, height);
 }
 
-// --- НОВАЯ МИНИ-КАРТА: АВТОМАТИЧЕСКИЙ МАСШТАБ ПОД ВСЮ СИСТЕМУ ---
+// --- МИНИ-КАРТА С ЛОГИРОВАНИЕМ ---
 function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height) {
+    console.log('drawMiniMap called'); // ЛОГ 1
     const miniSize = 120;
     const miniX = width - miniSize - 20;
     const miniY = height - miniSize - 20;
@@ -544,21 +546,22 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
     ctx.stroke();
     ctx.restore();
 
-    // Вычисляем реальный радиус системы (максимальная орбита + отступ)
-    let systemRadius = starRadius * 1.8; // как минимум отступ от звезды
+    // Вычисляем реальный радиус системы
+    let systemRadius = starRadius * 1.8;
     if (planets && planets.length > 0) {
         const maxOrbitIndex = planets.reduce((max, p) => Math.max(max, p.orbit_index), 0);
-        // Используем те же шаги, что и в drawSystem
-        const step = (maxOrbitIndex > 0) ? (maxRadius / (maxOrbitIndex + 1)) : maxRadius / 3;
-        const maxOrbitRadius = starRadius * 1.8 + (maxOrbitIndex + 1) * step * 1.1; // +10% запас
+        // Пересчитываем шаг на основе maxRadius (как в drawSystem)
+        const availableRadius = maxRadius - starRadius * 1.8;
+        const step = (maxOrbitIndex > 0) ? (availableRadius / (maxOrbitIndex + 1)) : availableRadius / 3;
+        const maxOrbitRadius = starRadius * 1.8 + (maxOrbitIndex + 1) * step * 1.1;
         systemRadius = Math.max(systemRadius, maxOrbitRadius);
     }
+    console.log('systemRadius:', systemRadius); // ЛОГ 2
 
-    // Масштаб мини-карты (с отступом 10%)
     const padding = 0.9;
     const miniScale = (miniSize * padding) / (systemRadius * 2);
+    console.log('miniScale:', miniScale); // ЛОГ 3
 
-    // Центр мини-карты
     const centerX = miniX + miniSize / 2;
     const centerY = miniY + miniSize / 2;
 
@@ -571,13 +574,18 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
     ctx.restore();
 
     // Рисуем планеты
-    if (planets) {
+    if (planets && planets.length > 0) {
+        const maxOrbitIndex = planets.reduce((max, p) => Math.max(max, p.orbit_index), 0);
+        const availableRadius = maxRadius - starRadius * 1.8;
+        const step = (maxOrbitIndex > 0) ? (availableRadius / (maxOrbitIndex + 1)) : availableRadius / 3;
+
         planets.forEach((p, idx) => {
             const randomOffset = (idx * 1.7) % 0.2 - 0.1;
             const orbitRadius = starRadius * 1.8 + (p.orbit_index + 1) * step * (1 + randomOffset);
             const angle = (idx * 1.3 + 0.7) % (2 * Math.PI);
             const px = centerX + orbitRadius * Math.cos(angle) * miniScale;
             const py = centerY + orbitRadius * Math.sin(angle) * miniScale;
+            console.log('Planet', idx, 'px:', px, 'py:', py); // ЛОГ 4
             ctx.save();
             ctx.beginPath();
             ctx.arc(px, py, Math.max(1.5, 3 * miniScale), 0, 2 * Math.PI);
@@ -595,6 +603,7 @@ function drawMiniMap(ctx, cx, cy, maxRadius, starRadius, planets, width, height)
     const viewCenterY = centerY - (modalState.offsetY / modalState.zoom) * viewScale;
     const viewX = viewCenterX - viewWidth / 2;
     const viewY = viewCenterY - viewHeight / 2;
+    console.log('viewX:', viewX, 'viewY:', viewY, 'viewWidth:', viewWidth, 'viewHeight:', viewHeight); // ЛОГ 5
 
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
