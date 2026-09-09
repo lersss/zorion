@@ -1,3 +1,4 @@
+<!-- web/map.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -9,49 +10,43 @@
 <body>
     <div id="header">
         <h1>🗺️ Карта миров</h1>
-        <!-- --- ФИЛЬТРЫ (в шапке) --- -->
-        <div id="filters-container" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-left: 20px;">
-            <label style="color:#94a3b8; font-size:0.8rem;">
-                <input type="checkbox" id="filter-has-planets"> С планетами
-            </label>
-            <label style="color:#94a3b8; font-size:0.8rem;">
-                <input type="checkbox" id="filter-life"> Жизнь
-            </label>
-            <label style="color:#94a3b8; font-size:0.8rem;">
-                <input type="checkbox" id="filter-habitable"> Обитаемые
-            </label>
-            <label style="color:#94a3b8; font-size:0.8rem;">
-                Тип планеты:
-                <select id="filter-planet-type" style="background:#1e293b; color:#e0e0e0; border:1px solid #334155; border-radius:4px; padding:2px 6px;">
-                    <option value="">Все</option>
-                    <option value="землеподобная">Землеподобная</option>
-                    <option value="газовый гигант">Газовый гигант</option>
-                    <option value="пустынная">Пустынная</option>
-                    <option value="ледяная">Ледяная</option>
-                    <option value="вулканическая">Вулканическая</option>
-                    <option value="океаническая">Океаническая</option>
-                </select>
-            </label>
-            <label style="color:#94a3b8; font-size:0.8rem;">
-                Ресурсы:
-                <select id="filter-resource" style="background:#1e293b; color:#e0e0e0; border:1px solid #334155; border-radius:4px; padding:2px 6px;">
-                    <option value="">Все</option>
-                    <option value="минералы">Минералы</option>
-                    <option value="энергия">Энергия</option>
-                    <option value="органика">Органика</option>
-                    <option value="редкие">Редкие</option>
-                </select>
-            </label>
-            <button id="apply-filters" style="background:#334155; border:none; color:#e0e0e0; padding:4px 12px; border-radius:4px; cursor:pointer;">Применить</button>
-            <button id="reset-filters" style="background:#334155; border:none; color:#e0e0e0; padding:4px 12px; border-radius:4px; cursor:pointer;">Сбросить</button>
-            <span id="filter-status" style="color:#94a3b8; font-size:0.8rem; margin-left:10px;"></span>
-        </div>
         <div style="margin-left:auto;">
             <span id="currentWorldLabel" style="margin-right:1rem;color:#94a3b8;">Текущий мир: <strong id="currentWorldName">—</strong></span>
             <button onclick="location.href='/'">🏠 Дашборд</button>
             <button onclick="location.href='/assignments'">📋 Контракты</button>
         </div>
     </div>
+    <!-- --- НОВАЯ КОМПАКТНАЯ ПАНЕЛЬ ФИЛЬТРОВ (без кнопки "Применить") --- -->
+    <div id="filters-bar" style="display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; padding: 2px 12px; background: #0f172a; border-bottom: 1px solid #1e293b; font-size: 0.7rem; color: #94a3b8;">
+        <label><input type="checkbox" id="filter-has-planets"> Планеты</label>
+        <label><input type="checkbox" id="filter-life"> Жизнь</label>
+        <label><input type="checkbox" id="filter-habitable"> Обитаемые</label>
+        <select id="filter-planet-type" style="background:#1e293b; color:#e0e0e0; border:1px solid #334155; border-radius:4px; padding:2px 4px;">
+            <option value="">Тип</option>
+            <option value="землеподобная">Землеподобная</option>
+            <option value="газовый гигант">Газовый гигант</option>
+            <option value="пустынная">Пустынная</option>
+            <option value="ледяная">Ледяная</option>
+            <option value="вулканическая">Вулканическая</option>
+            <option value="океаническая">Океаническая</option>
+        </select>
+        <select id="filter-resource" style="background:#1e293b; color:#e0e0e0; border:1px solid #334155; border-radius:4px; padding:2px 4px;">
+            <option value="">Ресурсы</option>
+            <option value="минералы">Минералы</option>
+            <option value="энергия">Энергия</option>
+            <option value="органика">Органика</option>
+            <option value="редкие">Редкие</option>
+        </select>
+        <span id="filter-count" style="color:#4a9eff; font-weight:bold; margin-left:2px;"></span>
+        <button id="reset-filters" style="background:#334155; border:none; color:#e0e0e0; padding:2px 10px; border-radius:4px; cursor:pointer;">Сбросить</button>
+        <div id="filter-spinner" style="display:none; width:14px; height:14px; border:2px solid #4a9eff; border-top-color:transparent; border-radius:50%; animation: spin 0.8s linear infinite;"></div>
+    </div>
+    <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #filters-bar label { display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
+        #filters-bar input[type="checkbox"] { margin: 0; }
+        #filters-bar select { font-size: 0.7rem; padding: 1px 4px; }
+    </style>
     <div id="canvas-wrapper">
         <canvas id="mapCanvas"></canvas>
         <div id="loading">⏳ Загрузка данных...</div>
