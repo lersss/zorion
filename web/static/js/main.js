@@ -1,11 +1,106 @@
 // web/static/js/main.js
 import { state, elements } from './map/config.js';
 import { resizeCanvas } from './map/render.js';
-import { loadData } from './map/data.js';
 import { handleCanvasClick, initFlyBtn, initPanZoom, initHover } from './map/events.js';
 import { animationLoop } from './map/animation.js';
-import { filterWorlds } from './map/data.js';
-import { applyFiltersFromUI, resetFilters } from './filters.js';
+import { centerOnAgent } from './map/navigation.js';
+import { applyFiltersFromUI, resetFilters, filterState } from './filters.js';
+
+// --- Загрузка миров с фильтрацией ---
+async function loadWorldsWithFilters(filters) {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        throw new Error('No token');
+    }
+    let url = '/api/worlds/filter';
+    if (filters) {
+        const params = new URLSearchParams();
+        if (filters.hasPlanets) params.append('has_planets', 'true');
+        if (filters.hasLife) params.append('has_life', 'true');
+        if (filters.hasHabitable) params.append('has_habitable', 'true');
+        if (filters.planetType) params.append('planet_type', filters.planetType);
+        if (filters.resourceCategory) params.append('resource_category', filters.resourceCategory);
+        const query = params.toString();
+        if (query) url += '?' + query;
+    }
+    const res = await fetch(url, {
+        headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) {
+        throw new Error('Failed to fetch worlds');
+    }
+    return res.json();
+}
+
+// --- Загрузка всех данных (миры + пользователь) ---
+async function loadAllData() {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        console.warn('No token, redirect to login');
+        window.location.href = '/login-page';
+        return;
+    }
+    elements.loading.style.display = 'block';
+    elements.statusBar.textContent = '⏳ Загрузка данных...';
+
+    try {
+        // Загружаем миры с фильтрами (если они активны)
+        let filters = null;
+        if (filterState.hasPlanets || filterState.hasLife || filterState.hasHabitable ||
+            filterState.planetType || filterState.resourceCategory) {
+            filters = filterState;
+        }
+        const worlds = await loadWorldsWithFilters(filters);
+        state.worlds = worlds;
+        state.filteredWorlds = null; // фильтрация уже на бэкенде
+
+        // Загружаем данные пользователя
+        await loadUserData();
+
+        // Центрируем карту
+        if (state.currentWorldId) {
+            centerOnAgent();
+        } else {
+            if (state.worlds.length > 0) {
+                const first = state.worlds[0];
+                // центрирование будет выполнено после resize
+            }
+        }
+
+        resizeCanvas();
+        elements.loading.style.display = 'none';
+        elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
+    } catch (err) {
+        console.error('Load data error:', err);
+        elements.loading.textContent = '❌ Ошибка загрузки данных';
+        elements.statusBar.textContent = '❌ Ошибка';
+        if (err.message === 'No token') {
+            window.location.href = '/login-page';
+        }
+        throw err;
+    }
+}
+
+async function loadUserData() {
+    try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const res = await fetch('/me', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) return;
+        const user = await res.json();
+        if (user.current_world_id) {
+            state.currentWorldId = user.current_world_id;
+            const world = state.worlds.find(w => w.id === user.current_world_id);
+            if (world) {
+                document.getElementById('currentWorldName').textContent = world.name;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load user data:', e);
+    }
+}
 
 function init() {
     elements.canvas.addEventListener('click', handleCanvasClick);
@@ -19,42 +114,45 @@ function init() {
     const resetBtn = document.getElementById('reset-filters');
 
     if (applyBtn) {
-        applyBtn.addEventListener('click', () => {
+        applyBtn.addEventListener('click', async () => {
             applyFiltersFromUI();
-            state.filteredWorlds = filterWorlds(state.worlds);
-            resizeCanvas();
-            const count = state.filteredWorlds.length;
-            const statusEl = document.getElementById('filter-status');
-            if (statusEl) {
-                statusEl.textContent = `Показано: ${count} из ${state.worlds ? state.worlds.length : 0}`;
+            // Перезагружаем миры с новыми фильтрами
+            try {
+                await loadAllData();
+                const statusEl = document.getElementById('filter-status');
+                if (statusEl) {
+                    statusEl.textContent = `Показано: ${state.worlds.length}`;
+                }
+            } catch (e) {
+                console.error('Filter apply error:', e);
             }
         });
     }
 
     if (resetBtn) {
-        resetBtn.addEventListener('click', () => {
+        resetBtn.addEventListener('click', async () => {
             resetFilters();
-            const hasPlanets = document.getElementById('filter-has-planets');
-            const hasLife = document.getElementById('filter-life');
-            const hasHabitable = document.getElementById('filter-habitable');
-            const planetType = document.getElementById('filter-planet-type');
-            const resource = document.getElementById('filter-resource');
-            if (hasPlanets) hasPlanets.checked = false;
-            if (hasLife) hasLife.checked = false;
-            if (hasHabitable) hasHabitable.checked = false;
-            if (planetType) planetType.value = '';
-            if (resource) resource.value = '';
-            state.filteredWorlds = null;
-            resizeCanvas();
-            const statusEl = document.getElementById('filter-status');
-            if (statusEl) {
-                statusEl.textContent = '';
+            // Сброс UI
+            document.getElementById('filter-has-planets').checked = false;
+            document.getElementById('filter-life').checked = false;
+            document.getElementById('filter-habitable').checked = false;
+            document.getElementById('filter-planet-type').value = '';
+            document.getElementById('filter-resource').value = '';
+            // Перезагружаем без фильтров
+            try {
+                await loadAllData();
+                const statusEl = document.getElementById('filter-status');
+                if (statusEl) {
+                    statusEl.textContent = '';
+                }
+            } catch (e) {
+                console.error('Reset filter error:', e);
             }
         });
     }
 
-    loadData().then(() => {
-        state.filteredWorlds = null;
+    // Первоначальная загрузка
+    loadAllData().then(() => {
         animationLoop();
     });
 }
