@@ -4,6 +4,7 @@ import { isFiniteNumber, worldToCanvas, getStarColor } from './utils.js';
 import { CONFIG } from '../config.js';
 import { centerOnAgent } from './navigation.js';
 import { filterState } from '../filters.js';
+import { resizeCanvas } from './render.js'; // <-- импорт
 
 const { map: mapCfg } = CONFIG;
 
@@ -13,8 +14,8 @@ let dataLoaded = false;
 export async function loadData() {
     if (loadingData) return;
     loadingData = true;
-    elements.loading.style.display = 'block';
-    elements.statusBar.textContent = '⏳ Загрузка данных...';
+    if (elements.loading) elements.loading.style.display = 'block';
+    if (elements.statusBar) elements.statusBar.textContent = '⏳ Загрузка данных...';
 
     try {
         const token = localStorage.getItem('token');
@@ -31,17 +32,13 @@ export async function loadData() {
         state.worlds = worlds;
         dataLoaded = true;
 
-        // Загружаем данные пользователя
         await loadUserData();
 
-        // Применяем фильтры (если активны)
         state.filteredWorlds = filterWorlds(state.worlds);
 
-        // Центрируем карту
         if (state.currentWorldId) {
             centerOnAgent();
         } else {
-            // Центр на первом мире
             if (state.worlds.length > 0) {
                 const first = state.worlds[0];
                 const pos = worldToCanvas(first);
@@ -52,14 +49,16 @@ export async function loadData() {
             }
         }
 
-        resizeCanvas();
-        elements.loading.style.display = 'none';
-        elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
+        resizeCanvas(); // теперь работает
+        if (elements.loading) elements.loading.style.display = 'none';
+        if (elements.statusBar) {
+            elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
+        }
         return state.worlds;
     } catch (err) {
         console.error('Load data error:', err);
-        elements.loading.textContent = '❌ Ошибка загрузки данных';
-        elements.statusBar.textContent = '❌ Ошибка';
+        if (elements.loading) elements.loading.textContent = '❌ Ошибка загрузки данных';
+        if (elements.statusBar) elements.statusBar.textContent = '❌ Ошибка';
         throw err;
     } finally {
         loadingData = false;
@@ -95,7 +94,6 @@ export function filterWorlds(worlds) {
     if (!hasActiveFilters) return worlds;
 
     return worlds.filter(world => {
-        // Если у мира нет планет
         if (!world.planets || world.planets.length === 0) {
             if (filterState.hasPlanets) return false;
             if (filterState.hasLife) return false;
@@ -105,7 +103,6 @@ export function filterWorlds(worlds) {
             return true;
         }
 
-        // Проверяем планеты
         if (filterState.hasPlanets && world.planets.length === 0) return false;
 
         if (filterState.hasLife) {
@@ -135,7 +132,3 @@ export function filterWorlds(worlds) {
         return true;
     });
 }
-
-// Переопределяем resizeCanvas из render.js (чтобы не было циклических зависимостей)
-// Вместо этого мы используем draw() из render.js, который уже есть.
-// Но мы добавим в data.js вызов перерисовки после загрузки.
