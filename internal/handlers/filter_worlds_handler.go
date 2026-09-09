@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -11,6 +12,14 @@ import (
 
 // FilterWorldsHandler возвращает миры с фильтрацией по планетам
 func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Request) {
+	// Перехват паники
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("🔥 PANIC in FilterWorldsHandler: %v", rec)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	}()
+
 	queryParams := r.URL.Query()
 
 	hasPlanets := queryParams.Get("has_planets") == "true"
@@ -28,9 +37,12 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 	args := []interface{}{}
 	argCounter := 1
 
+	// --- Временно упрощаем: только hasPlanets ---
 	if hasPlanets {
 		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id)`
 	}
+	// --- Остальные фильтры пока закомментированы для диагностики ---
+	/*
 	if hasLife {
 		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id AND (p.data->>'life')::boolean = true)`
 	}
@@ -52,9 +64,11 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 		args = append(args, resourceCategory)
 		argCounter++
 	}
+	*/
 
 	rows, err := h.db.Query(sqlQuery, args...)
 	if err != nil {
+		log.Printf("❌ FilterWorldsHandler query error: %v", err)
 		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -73,16 +87,21 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 			&world.CreatedAt,
 			&world.UpdatedAt,
 		); err != nil {
+			log.Printf("❌ FilterWorldsHandler scan error: %v", err)
 			http.Error(w, "Scan error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		worlds = append(worlds, world)
 	}
 	if err = rows.Err(); err != nil {
+		log.Printf("❌ FilterWorldsHandler rows error: %v", err)
 		http.Error(w, "Rows error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(worlds)
+	if err := json.NewEncoder(w).Encode(worlds); err != nil {
+		log.Printf("❌ FilterWorldsHandler encode error: %v", err)
+		http.Error(w, "Encode error: "+err.Error(), http.StatusInternalServerError)
+	}
 }
