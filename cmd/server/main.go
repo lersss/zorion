@@ -109,6 +109,9 @@ func main() {
 		http.ServeFile(w, r, "./web/admin.html")
 	})
 
+	// API изображения планет
+	http.HandleFunc("/api/planet-image", handlers.PlanetImageHandler)
+	
 	// Статика
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./web/static"))))
 

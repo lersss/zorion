@@ -1,56 +1,55 @@
 // web/static/js/modal/textures.js
-import PlanetGenerator from '../planet_generator.js';
-import { hashStringToNumber, getClimateId } from './utils.js';
 
-let planetGen = null;
-let climateData = null;
 const textureCache = new Map();
 
-export async function initTextureGenerator() {
-    try {
-        const response = await fetch('/static/js/climates.json');
-        if (!response.ok) throw new Error('Failed to load climates.json');
-        climateData = await response.json();
-        planetGen = new PlanetGenerator({
-            canvasSize: 64,
-            maxCacheSize: 5000,
-            climateData: climateData
-        });
-        console.log('✅ PlanetGenerator initialized');
-    } catch (error) {
-        console.error('❌ Failed to load climate data:', error);
-        planetGen = new PlanetGenerator({
-            canvasSize: 64,
-            maxCacheSize: 5000,
-            climateData: null
-        });
-    }
-}
-
 export function getPlanetTexture(planet, spectralClass, sizeMultiplier) {
-    if (!planetGen) return null;
     const key = `planet_${planet.id || planet.orbit_index}_${spectralClass}`;
     if (textureCache.has(key)) return textureCache.get(key);
 
-    const climateId = getClimateId(planet);
-    const textureRadius = Math.min(30, 15 + (planet.size || 10) * 1.2);
+    // Параметры для запроса
     const seed = planet.id ? hashStringToNumber(planet.id) : Date.now() + planet.orbit_index;
+    const climateId = getClimateId(planet);
+    const radius = Math.min(30, 15 + (planet.size || 10) * 1.2);
 
-    try {
-        const result = planetGen.generate({
-            radius: textureRadius,
-            starType: spectralClass,
-            climateId: climateId,
-            seed: seed
-        });
-        textureCache.set(key, result.image);
-        return result.image;
-    } catch (e) {
-        console.warn('Planet texture generation failed:', e);
-        return null;
-    }
+    // Запрашиваем изображение с сервера
+    const url = `/api/planet-image?seed=${seed}&starType=${spectralClass}&climateId=${climateId}&radius=${radius}`;
+
+    // Используем fetch и создаём Image
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+
+    // Кешируем изображение
+    textureCache.set(key, img);
+    return img;
 }
 
 export function clearTextureCache() {
     textureCache.clear();
+}
+
+// Вспомогательные функции (нужно их импортировать или определить здесь)
+function hashStringToNumber(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash |= 0;
+    }
+    return Math.abs(hash);
+}
+
+function getClimateId(planet) {
+    const type = (planet.type || '').toLowerCase();
+    const temp = planet.temperature || 0;
+    const water = planet.water_percent || 0;
+
+    if (type.includes('вулканическая') || type.includes('лавовая')) return 'extreme';
+    if (type.includes('пустынная') && temp > 300) return 'hot';
+    if (type.includes('ледяная') || temp < 200) return 'cold';
+    if (type.includes('океаническая') || water > 60) return 'temperate';
+    if (temp > 350) return 'hot';
+    if (temp > 200) return 'temperate';
+    if (temp > 100) return 'cold';
+    return 'variable';
 }
