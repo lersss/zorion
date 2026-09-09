@@ -1,4 +1,4 @@
-// internal/generator/planet/planet_image.go (финальная версия, без дублей)
+// internal/generator/planet/planet_image.go
 package planet
 
 import (
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"math/rand"
 	"os"
 	"time"
