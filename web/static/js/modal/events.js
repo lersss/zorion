@@ -3,11 +3,17 @@ import { modalState } from './state.js';
 import { drawSystem } from './render.js';
 
 export function initEvents(canvas, spectralClass, planets, starRadius, starColor, width, height) {
+    // Получаем DPR (устройство пикселей на CSS-пиксель)
+    const dpr = window.devicePixelRatio || 1;
+
     // ---- HOVER ----
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
-        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        // Преобразуем координаты мыши в логические (без учёта dpr)
+        // canvas.width уже = width * dpr, поэтому mouseX в физических пикселях
+        // делим на dpr, чтобы получить логические
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width) / dpr;
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height) / dpr;
 
         const worldX = (mouseX - modalState.offsetX) / modalState.zoom;
         const worldY = (mouseY - modalState.offsetY) / modalState.zoom;
@@ -15,6 +21,7 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
         const cx = width / 2;
         const cy = height / 2;
 
+        // Проверка попадания в звезду
         const distToStar = Math.hypot(worldX - cx, worldY - cy);
         const maxStarRadius = Math.min(starRadius, Math.min(width, height) * 0.4 * 0.25);
         if (distToStar < maxStarRadius + 8) {
@@ -95,8 +102,8 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
     canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
         const rect = canvas.getBoundingClientRect();
-        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width) / dpr;
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height) / dpr;
 
         const delta = e.deltaY > 0 ? 0.9 : 1.1;
         const newZoom = Math.min(Math.max(modalState.zoom * delta, 0.3), 5);
@@ -122,8 +129,8 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
 
     window.addEventListener('mousemove', (e) => {
         if (modalState.isDragging) {
-            const dx = e.clientX - modalState.dragStartX;
-            const dy = e.clientY - modalState.dragStartY;
+            const dx = (e.clientX - modalState.dragStartX) / dpr;
+            const dy = (e.clientY - modalState.dragStartY) / dpr;
             modalState.offsetX = modalState.dragStartOffsetX + dx;
             modalState.offsetY = modalState.dragStartOffsetY + dy;
             drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
@@ -140,8 +147,8 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
     // ---- CLICK ----
     canvas.addEventListener('click', (e) => {
         const rect = canvas.getBoundingClientRect();
-        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width) / dpr;
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height) / dpr;
 
         const worldX = (mouseX - modalState.offsetX) / modalState.zoom;
         const worldY = (mouseY - modalState.offsetY) / modalState.zoom;
