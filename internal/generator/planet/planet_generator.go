@@ -242,14 +242,21 @@ func (g *Generator) determinePlanetCount(spectralClass string) int {
 	}
 }
 
+// generatePlanet создаёт одну планету с использованием архетипа и физики орбиты
 func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
+	// 1. Получаем архетип (черты: поверхность, гидросфера, атмосфера, биосфера)
 	archetype := GenerateArchetype(spectralClass, g.rng)
+
+	// 2. Генерируем физические параметры на основе архетипа и орбитальных данных
 	props := GenerateProperties(archetype, orbitIndex, spectralClass, starTemp, g.rng)
+
+	// 3. Генерируем название
 	name := names.GeneratePlanetName(g.rng, g.usedNames)
 	if name == "" {
 		name = "Планета-" + uuid.New().String()[:8]
 	}
 
+	// 4. Собираем данные в JSON
 	data := map[string]interface{}{
 		"type":              props.Type,
 		"size":              props.Size,
