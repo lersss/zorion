@@ -11,5 +11,6 @@ FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/server /server
 COPY --from=builder /app/web ./web
+COPY --from=builder /app/config ./config  
 EXPOSE 8080
 CMD ["/server"]
