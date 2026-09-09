@@ -266,9 +266,6 @@ function renderRightPanel(planets, selectedIndex) {
             return;
         }
 
-        // Активная вкладка (по умолчанию 'general')
-        let activeTab = 'general';
-
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <h3 style="margin: 0; font-size: 1rem; color: #aaa;">Планета #${selectedIndex + 1}</h3>
@@ -283,12 +280,10 @@ function renderRightPanel(planets, selectedIndex) {
             <div id="tab-content" style="font-size: 0.85rem; line-height: 1.6;"></div>
         `;
 
-        // Переключение вкладок
         const tabBtns = panel.querySelectorAll('.tab-btn');
         const tabContent = panel.querySelector('#tab-content');
 
         function switchTab(tab) {
-            activeTab = tab;
             tabBtns.forEach(btn => {
                 btn.style.color = btn.dataset.tab === tab ? '#fff' : '#888';
                 btn.style.background = btn.dataset.tab === tab ? '#2a2a4a' : 'none';
@@ -302,10 +297,8 @@ function renderRightPanel(planets, selectedIndex) {
             });
         });
 
-        // Первоначальная активация
         switchTab('general');
 
-        // Кнопка «Назад»
         const backBtn = panel.querySelector('#back-to-list-btn');
         if (backBtn) {
             backBtn.addEventListener('click', () => {

@@ -67,7 +67,6 @@ export async function drawSystem(canvas, spectralClass, planets, starRadius, sta
 
     // ---- СЛОЙ 3: ПЛАНЕТЫ (АСИНХРОННАЯ ЗАГРУЗКА) ----
     if (planets && planets.length > 0) {
-        // Загружаем все текстуры параллельно
         const loadPromises = planets.map(async (p, idx) => {
             const randomOffset = (idx * 1.7) % 0.2 - 0.1;
             const orbitRadius = finalStarRadius * 1.8 + (p.orbit_index + 1) * step * (1 + randomOffset);
@@ -118,7 +117,7 @@ export async function drawSystem(canvas, spectralClass, planets, starRadius, sta
             }
         });
 
-        // ---- ПОДСВЕТКА ПРИ ХОВЕРЕ (поверх планет) ----
+        // ---- ПОДСВЕТКА ПРИ ХОВЕРЕ ----
         if (modalState.hoveredObject === 'star') {
             ctx.save();
             ctx.shadowColor = 'rgba(255,255,255,0.3)';
@@ -144,6 +143,22 @@ export async function drawSystem(canvas, spectralClass, planets, starRadius, sta
                 ctx.fill();
                 ctx.strokeStyle = 'rgba(255,255,255,0.6)';
                 ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        // ---- ПОДСВЕТКА ВЫБРАННОЙ ПЛАНЕТЫ (поверх всего) ----
+        if (modalState.selectedPlanetIndex !== null) {
+            const p = loaded[modalState.selectedPlanetIndex];
+            if (p) {
+                ctx.save();
+                ctx.shadowColor = 'rgba(255,215,0,0.5)';
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius + 5, 0, 2 * Math.PI);
+                ctx.strokeStyle = 'rgba(255,215,0,0.8)';
+                ctx.lineWidth = 3;
                 ctx.stroke();
                 ctx.restore();
             }

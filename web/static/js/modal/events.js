@@ -15,7 +15,6 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
         const cx = width / 2;
         const cy = height / 2;
 
-        // Проверка попадания в звезду
         const distToStar = Math.hypot(worldX - cx, worldY - cy);
         const maxStarRadius = Math.min(starRadius, Math.min(width, height) * 0.4 * 0.25);
         if (distToStar < maxStarRadius + 8) {
@@ -152,16 +151,14 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
         const maxRadius = Math.min(width, height) * 0.4;
         const finalStarRadius = Math.min(starRadius, maxRadius * 0.25);
 
-        // Проверка клика по звезде
+        // Проверка клика по звезде — сбрасываем выбор
         const distToStar = Math.hypot(worldX - cx, worldY - cy);
         if (distToStar < finalStarRadius + 8) {
-            // Клик по звезде — сбрасываем выбор
             if (modalState.selectedPlanetIndex !== null) {
                 modalState.selectedPlanetIndex = null;
                 drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
-                // Обновить правую панель
-                if (typeof updateRightPanel === 'function') {
-                    updateRightPanel(planets, null);
+                if (typeof window.updateRightPanel === 'function') {
+                    window.updateRightPanel(null);
                 }
             }
             return;
@@ -211,8 +208,8 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
             if (modalState.selectedPlanetIndex !== foundPlanet) {
                 modalState.selectedPlanetIndex = foundPlanet;
                 drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
-                if (typeof updateRightPanel === 'function') {
-                    updateRightPanel(planets, foundPlanet);
+                if (typeof window.updateRightPanel === 'function') {
+                    window.updateRightPanel(foundPlanet);
                 }
             }
         } else {
@@ -220,8 +217,8 @@ export function initEvents(canvas, spectralClass, planets, starRadius, starColor
             if (modalState.selectedPlanetIndex !== null) {
                 modalState.selectedPlanetIndex = null;
                 drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
-                if (typeof updateRightPanel === 'function') {
-                    updateRightPanel(planets, null);
+                if (typeof window.updateRightPanel === 'function') {
+                    window.updateRightPanel(null);
                 }
             }
         }
