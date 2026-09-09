@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"zorion/internal/models"
 )
@@ -27,6 +28,10 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 	planetType := queryParams.Get("planet_type")
 	resourceCategory := queryParams.Get("resource_category")
 
+	// Логирование параметров
+	log.Printf("🔍 FilterWorldsHandler params: hasPlanets=%v, hasLife=%v, hasHabitable=%v, planetType='%s', resourceCategory='%s'",
+		hasPlanets, hasLife, hasHabitable, planetType, resourceCategory)
+
 	sqlQuery := `
 		SELECT w.id, w.name, w.coord_x, w.coord_y, w.spectral_class, w.temperature, w.created_at, w.updated_at
 		FROM worlds w
@@ -45,8 +50,10 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id AND (p.data->>'habitable')::boolean = true)`
 	}
 	if planetType != "" {
-		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id AND p.data->>'type' = $` + strconv.Itoa(argCounter) + `)`
-		args = append(args, planetType)
+		// Приводим к нижнему регистру для сравнения
+		planetTypeLower := strings.ToLower(planetType)
+		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id AND LOWER(p.data->>'type') = $` + strconv.Itoa(argCounter) + `)`
+		args = append(args, planetTypeLower)
 		argCounter++
 	}
 	if resourceCategory != "" {
@@ -60,6 +67,7 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 		argCounter++
 	}
 
+	// Логируем SQL
 	log.Printf("🔍 FilterWorldsHandler SQL: %s, args: %v", sqlQuery, args)
 
 	rows, err := h.db.Query(sqlQuery, args...)
