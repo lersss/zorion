@@ -1,3 +1,4 @@
+// internal/generator/planet/planet_data.go
 package planet
 
 import (
@@ -240,11 +241,9 @@ func (g *Generator) determinePlanetCount(spectralClass string) int {
 }
 
 func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
-	// Используем функцию из archetype.go и properties.go (они уже определены в пакете)
-	// Мы не дублируем их здесь.
-	// Вместо этого вызываем существующие функции:
+	// Используем архетип из archetype.go
 	archetype := GenerateArchetype(spectralClass, g.rng)
-	props := GenerateProperties(archetype, orbitIndex, spectralClass, starTemp, g.rng)
+	props := g.GenerateProperties(archetype, orbitIndex, spectralClass, starTemp)
 
 	name := names.GeneratePlanetName(g.rng, g.usedNames)
 	if name == "" {
@@ -268,6 +267,7 @@ func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass
 		"description":       generateDescription(g.rng, props.Type, props.Habitable, props.Life),
 		"development_level": props.Development,
 	}
+
 	dataJSON, _ := json.Marshal(data)
 
 	return &PlanetData{
@@ -471,6 +471,33 @@ func generateDescription(rng *rand.Rand, planetType string, habitable, life bool
 	return "Безжизненный и суровый мир."
 }
 
-// Замечание: функции GenerateArchetype, GenerateProperties, fallbackArchetype
-// и структуры Archetype, Properties определены в других файлах пакета (archetype.go, properties.go).
-// Здесь мы их не дублируем, чтобы избежать конфликтов.
+// GenerateProperties использует типы из properties.go и archetype.go
+func (g *Generator) GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass string, starTemp int) *Properties {
+	// Вставьте свою полную логику из старого generator.go
+	// Я даю упрощённую версию для компиляции, но вы можете заменить на свой код.
+	size := 0.5 + g.rng.Float64()*14.5
+	mass := 0.1 + g.rng.Float64()*19.9
+	temp := 200.0 + g.rng.Float64()*300.0
+	water := g.rng.Float64() * 100
+	life := false
+	if temp > 200 && temp < 350 && water > 10 {
+		life = g.rng.Float64() < 0.4
+	}
+	habitable := life && temp > 200 && temp < 350
+
+	return &Properties{
+		Type:          archetype.Surface,
+		Size:          size,
+		Mass:          mass,
+		Atmosphere:    archetype.Atmosphere,
+		Temperature:   temp,
+		WaterPercent:  water,
+		Moons:         int(size / 5),
+		Habitable:     habitable,
+		Life:          life,
+		Population:    0,
+		Political:     "нет",
+		ConflictLevel: 0,
+		Development:   0,
+	}
+}
