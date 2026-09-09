@@ -1,859 +1,1175 @@
-/**
- * planet-generator.js
- * Модуль для генерации процедурных планет с учётом климатических данных.
- * Поддерживает типы: rocky, earth, gas, ice, lava (выбираются на основе климата)
- * Принимает JSON с климатами, содержащий:
- *   - id, name, weight (по спектральным типам OBAFGKM),
- *   - allowed_surfaces, allowed_hydrospheres, allowed_atmospheres, allowed_biospheres,
- *   - temperature_min/max, water_chance, life_chance.
- * 
- * Экспортирует класс PlanetGenerator
- * 
- * Пример:
- *   import { PlanetGenerator } from './planet-generator.js';
- *   import climateData from './climates.json' assert { type: 'json' };
- *   const gen = new PlanetGenerator({ canvasSize: 64, climateData });
- *   const planet = gen.generate({ radius: 40, starType: 'G', climateId: 'temperate' });
- *   ctx.drawImage(planet.image, x, y, 40, 40);
- */
+// planet.go
+// Библиотека для генерации процедурных планет с учётом климатических данных.
+// Поддерживает типы: rocky, earth, ice, lava, gas (с полосами и случайным наклоном).
+// Возвращает image.RGBA, который можно сохранить в PNG или использовать в игре.
 
-// ----- Вспомогательные функции (внутренние) -----
+package planet
 
-/**
- * Простой генератор псевдослучайных чисел с seed
- * @param {number} seed - начальное число
- * @returns {function(): number} функция, возвращающая float 0..1
- */
-function createRNG(seed) {
-    let s = seed || Date.now() & 0x7fffffff;
-    return function() {
-        s = (s * 9301 + 49297) & 0x7fffffff;
-        return s / 0x7fffffff;
-    };
+import (
+	"encoding/json"
+	"image"
+	"image/color"
+	"math"
+	"math/rand"
+	"os"
+	"time"
+)
+
+// ---------- Структуры для загрузки JSON с климатами ----------
+
+// ClimateWeight - веса для спектральных типов звёзд (OBAFGKM)
+type ClimateWeight struct {
+	O float64 `json:"O"`
+	B float64 `json:"B"`
+	A float64 `json:"A"`
+	F float64 `json:"F"`
+	G float64 `json:"G"`
+	K float64 `json:"K"`
+	M float64 `json:"M"`
 }
 
-/**
- * Хеширует объект параметров для ключа кэша
- * @param {object} params - параметры планеты
- * @returns {string} хеш-строка
- */
-function hashParams(params) {
-    return JSON.stringify(params);
+// Climate - описание одного климатического типа
+type Climate struct {
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	Weight             ClimateWeight `json:"weight"`
+	AllowedSurfaces    []string      `json:"allowed_surfaces"`
+	AllowedHydrospheres []string    `json:"allowed_hydrospheres"`
+	AllowedAtmospheres  []string    `json:"allowed_atmospheres"`
+	AllowedBiospheres   []string    `json:"allowed_biospheres"`
+	TemperatureMin      int          `json:"temperature_min"`
+	TemperatureMax      int          `json:"temperature_max"`
+	WaterChance         float64      `json:"water_chance"`
+	LifeChance          float64      `json:"life_chance"`
 }
 
-/**
- * Парсит CSS-цвет в массив [r,g,b,a] (0-255)
- */
-function parseColor(colorStr) {
-    const temp = document.createElement('div');
-    temp.style.color = colorStr;
-    document.body.appendChild(temp);
-    const style = getComputedStyle(temp);
-    const rgb = style.color.match(/\d+/g);
-    document.body.removeChild(temp);
-    if (rgb) {
-        let r = parseInt(rgb[0]), g = parseInt(rgb[1]), b = parseInt(rgb[2]);
-        let a = 1;
-        if (rgb.length > 3) a = parseFloat(rgb[3]);
-        return [r, g, b, a * 255];
-    }
-    return [100, 150, 255, 50];
+// ClimateData - корневой объект JSON
+type ClimateData struct {
+	Climates []Climate `json:"climates"`
 }
 
-/**
- * Наложение сферической тени, блика и атмосферы на ImageData
- * @param {ImageData} imageData - исходное изображение (планета без эффектов)
- * @param {number} size - размер стороны квадрата
- * @param {object} options - параметры эффектов
- * @param {string} options.atmosphereColor - цвет атмосферы (CSS-цвет)
- * @param {number} options.atmosphereIntensity - 0..1
- * @param {number} options.highlightIntensity - 0..1 (яркость блика)
- * @param {string} options.highlightColor - цвет блика (обычно белый)
- * @param {number} options.shadowIntensity - 0..1 (тень)
- */
-function applyPostProcessing(imageData, size, options) {
-    const data = imageData.data;
-    const w = size, h = size;
-    const cx = w / 2, cy = h / 2;
-    const radius = Math.min(w, h) / 2 - 2;
+// ---------- Структура генератора ----------
 
-    const atmColor = parseColor(options.atmosphereColor || 'rgba(100,150,255,0.2)');
-    const highlightColor = parseColor(options.highlightColor || 'rgba(255,255,255,0.9)');
-    const shadowStrength = Math.min(1, Math.max(0, options.shadowIntensity || 0.6));
-    const highlightStrength = Math.min(1, Math.max(0, options.highlightIntensity || 0.3));
-    const atmStrength = Math.min(1, Math.max(0, options.atmosphereIntensity || 0.2));
-
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const dx = x - cx, dy = y - cy;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            const normDist = dist / radius;
-            const idx = (y * w + x) * 4;
-
-            if (normDist > 1.2) {
-                // Вне зоны свечения - прозрачный
-                data[idx+3] = 0;
-                continue;
-            }
-            if (normDist > 1) {
-                // Атмосферное свечение снаружи
-                const outer = (normDist - 1) / 0.2;
-                const alpha = atmStrength * (1 - outer) * 0.5;
-                data[idx] = (data[idx] * (1 - alpha) + atmColor[0] * alpha) | 0;
-                data[idx+1] = (data[idx+1] * (1 - alpha) + atmColor[1] * alpha) | 0;
-                data[idx+2] = (data[idx+2] * (1 - alpha) + atmColor[2] * alpha) | 0;
-                data[idx+3] = (data[idx+3] * (1 - alpha) + 255 * alpha) | 0;
-                continue;
-            }
-
-            // ---- Сферическая тень ----
-            const lightX = -0.5, lightY = -0.4;
-            const len = Math.sqrt(lightX*lightX + lightY*lightY);
-            const nx = lightX / len, ny = lightY / len;
-            const z = Math.sqrt(Math.max(0, radius*radius - dx*dx - dy*dy));
-            const normLen = Math.sqrt(dx*dx + dy*dy + z*z);
-            const normDx = dx / normLen, normDy = dy / normLen, normDz = z / normLen;
-            let diffuse = normDx * nx + normDy * ny + normDz * 0.2;
-            diffuse = Math.max(0, Math.min(1, diffuse));
-            const shadow = 1 - shadowStrength * (1 - diffuse);
-            data[idx] = (data[idx] * shadow) | 0;
-            data[idx+1] = (data[idx+1] * shadow) | 0;
-            data[idx+2] = (data[idx+2] * shadow) | 0;
-
-            // ---- Блик ----
-            const reflectX = 2 * diffuse * normDx - nx;
-            const reflectY = 2 * diffuse * normDy - ny;
-            const reflectZ = 2 * diffuse * normDz - 0.2;
-            const spec = Math.max(0, reflectZ);
-            const specIntensity = Math.pow(spec, 20) * highlightStrength * 2;
-            if (specIntensity > 0.01) {
-                data[idx] = Math.min(255, data[idx] + (highlightColor[0] - data[idx]) * specIntensity) | 0;
-                data[idx+1] = Math.min(255, data[idx+1] + (highlightColor[1] - data[idx+1]) * specIntensity) | 0;
-                data[idx+2] = Math.min(255, data[idx+2] + (highlightColor[2] - data[idx+2]) * specIntensity) | 0;
-            }
-
-            // ---- Внутренняя атмосфера ----
-            if (atmStrength > 0 && normDist > 0.7) {
-                const edge = (normDist - 0.7) / 0.3;
-                const atmAlpha = atmStrength * edge * 0.8;
-                data[idx] = (data[idx] * (1 - atmAlpha) + atmColor[0] * atmAlpha) | 0;
-                data[idx+1] = (data[idx+1] * (1 - atmAlpha) + atmColor[1] * atmAlpha) | 0;
-                data[idx+2] = (data[idx+2] * (1 - atmAlpha) + atmColor[2] * atmAlpha) | 0;
-            }
-        }
-    }
+// PlanetGenerator - основной объект для генерации планет
+type PlanetGenerator struct {
+	climates      []Climate
+	canvasSize    int          // внутренний размер квадрата (по умолчанию 64)
+	enableCache   bool
+	cache         map[string]*CachedPlanet
+	cacheOrder    []string
+	maxCacheSize  int
+	rand          *rand.Rand
 }
 
-// ----- Генераторы для разных типов планет (базовые, без пост-эффектов) -----
-
-function generateRocky(size, rng, params) {
-    const imageData = new ImageData(size, size);
-    const data = imageData.data;
-    const radius = size / 2 - 2;
-    const cx = size / 2, cy = size / 2;
-    const baseR = 100 + rng() * 60;
-    const baseG = 80 + rng() * 50;
-    const baseB = 60 + rng() * 40;
-    const craterCount = 3 + Math.floor(rng() * 8);
-    const craters = [];
-    for (let i = 0; i < craterCount; i++) {
-        const angle = rng() * 2 * Math.PI;
-        const dist = rng() * radius * 0.8;
-        const crx = cx + Math.cos(angle) * dist;
-        const cry = cy + Math.sin(angle) * dist;
-        const crRadius = 2 + rng() * 6;
-        craters.push({ x: crx, y: cry, r: crRadius, depth: 0.3 + rng() * 0.5 });
-    }
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            const dx = x - cx, dy = y - cy;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist > radius) {
-                const idx = (y * size + x) * 4;
-                data[idx+3] = 0;
-                continue;
-            }
-            const noise1 = Math.sin(x * 0.2 + y * 0.3) * 10 + Math.cos(x * 0.4 - y * 0.5) * 8;
-            const noise2 = Math.sin(x * 0.7 + y * 0.9) * 5;
-            let r = baseR + noise1 + noise2;
-            let g = baseG + noise1 * 0.8 + noise2 * 0.6;
-            let b = baseB + noise1 * 0.5 + noise2 * 0.4;
-            for (const cr of craters) {
-                const ddx = x - cr.x, ddy = y - cr.y;
-                const d = Math.sqrt(ddx*ddx + ddy*ddy);
-                if (d < cr.r) {
-                    const factor = 1 - d / cr.r;
-                    const darken = factor * cr.depth * 30;
-                    r -= darken; g -= darken; b -= darken;
-                    if (d > cr.r * 0.7) {
-                        const rim = (d - cr.r * 0.7) / (cr.r * 0.3) * 10;
-                        r += rim; g += rim; b += rim;
-                    }
-                }
-            }
-            r = Math.max(0, Math.min(255, r));
-            g = Math.max(0, Math.min(255, g));
-            b = Math.max(0, Math.min(255, b));
-            const idx = (y * size + x) * 4;
-            data[idx] = r | 0;
-            data[idx+1] = g | 0;
-            data[idx+2] = b | 0;
-            data[idx+3] = 255;
-        }
-    }
-    return imageData;
+// CachedPlanet - кэшированная планета
+type CachedPlanet struct {
+	Image *image.RGBA
+	Meta  PlanetMeta
 }
 
-function generateEarth(size, rng, params) {
-    const imageData = new ImageData(size, size);
-    const data = imageData.data;
-    const radius = size / 2 - 2;
-    const cx = size / 2, cy = size / 2;
-    const oceanR = 20 + rng() * 30;
-    const oceanG = 60 + rng() * 50;
-    const oceanB = 120 + rng() * 60;
-    const continents = [];
-    const numContinents = 3 + Math.floor(rng() * 4);
-    for (let i = 0; i < numContinents; i++) {
-        const angle = rng() * 2 * Math.PI;
-        const dist = rng() * radius * 0.7;
-        const cx2 = cx + Math.cos(angle) * dist;
-        const cy2 = cy + Math.sin(angle) * dist;
-        const rad = 5 + rng() * 15;
-        const colorR = 50 + rng() * 80;
-        const colorG = 100 + rng() * 70;
-        const colorB = 30 + rng() * 50;
-        continents.push({ x: cx2, y: cy2, r: rad, color: [colorR, colorG, colorB] });
-    }
-    const clouds = [];
-    const numClouds = 2 + Math.floor(rng() * 5);
-    for (let i = 0; i < numClouds; i++) {
-        const angle = rng() * 2 * Math.PI;
-        const dist = rng() * radius * 0.8;
-        const cx2 = cx + Math.cos(angle) * dist;
-        const cy2 = cy + Math.sin(angle) * dist;
-        const rad = 4 + rng() * 12;
-        clouds.push({ x: cx2, y: cy2, r: rad, alpha: 0.1 + rng() * 0.3 });
-    }
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            const dx = x - cx, dy = y - cy;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist > radius) {
-                const idx = (y * size + x) * 4;
-                data[idx+3] = 0;
-                continue;
-            }
-            let r = oceanR, g = oceanG, b = oceanB;
-            for (const cont of continents) {
-                const ddx = x - cont.x, ddy = y - cont.y;
-                const d = Math.sqrt(ddx*ddx + ddy*ddy);
-                if (d < cont.r) {
-                    const factor = 1 - d / cont.r;
-                    const blend = factor * factor * 0.9 + 0.1;
-                    r = r * (1 - blend) + cont.color[0] * blend;
-                    g = g * (1 - blend) + cont.color[1] * blend;
-                    b = b * (1 - blend) + cont.color[2] * blend;
-                }
-            }
-            const noise = (Math.sin(x * 0.5 + y * 0.7) * 5 + Math.cos(x * 0.9 - y * 0.3) * 4);
-            r += noise; g += noise; b += noise;
-            for (const cl of clouds) {
-                const ddx = x - cl.x, ddy = y - cl.y;
-                const d = Math.sqrt(ddx*ddx + ddy*ddy);
-                if (d < cl.r) {
-                    const factor = 1 - d / cl.r;
-                    const alpha = factor * cl.alpha;
-                    r = r * (1 - alpha) + 255 * alpha;
-                    g = g * (1 - alpha) + 255 * alpha;
-                    b = b * (1 - alpha) + 255 * alpha;
-                }
-            }
-            r = Math.max(0, Math.min(255, r));
-            g = Math.max(0, Math.min(255, g));
-            b = Math.max(0, Math.min(255, b));
-            const idx = (y * size + x) * 4;
-            data[idx] = r | 0;
-            data[idx+1] = g | 0;
-            data[idx+2] = b | 0;
-            data[idx+3] = 255;
-        }
-    }
-    return imageData;
+// PlanetMeta - метаданные сгенерированной планеты
+type PlanetMeta struct {
+	Type         string  // rocky, earth, ice, lava, gas
+	Radius       int     // отображаемый радиус
+	Seed         int64
+	Climate      ClimateInfo
+	Surface      string
+	Hydrosphere  string
+	Atmosphere   string
+	Biosphere    string
+	HasAtmosphere bool
+	HasRings     bool
+	StarType     string
+	Temperature  float64
 }
 
-function generateGas(size, rng, params) {
-    const imageData = new ImageData(size, size);
-    const data = imageData.data;
-    const radius = size / 2 - 2;
-    const cx = size / 2, cy = size / 2;
-    const numBands = 4 + Math.floor(rng() * 6);
-    const bands = [];
-    let baseHue = 10 + rng() * 40;
-    for (let i = 0; i < numBands; i++) {
-        const yPos = -radius + (i / (numBands-1)) * 2 * radius;
-        const width = 3 + rng() * 8;
-        const color = `hsl(${baseHue + rng()*30 - 15}, 80%, ${40 + rng()*30}%)`;
-        const parsed = parseColor(color);
-        bands.push({ y: yPos, w: width, color: parsed });
-    }
-    const spotX = cx + (rng() - 0.5) * radius * 0.8;
-    const spotY = cy + (rng() - 0.5) * radius * 0.6;
-    const spotR = 3 + rng() * 8;
-    const spotColor = parseColor(`hsl(${baseHue + 20}, 90%, 60%)`);
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            const dx = x - cx, dy = y - cy;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist > radius) {
-                const idx = (y * size + x) * 4;
-                data[idx+3] = 0;
-                continue;
-            }
-            let r = 100, g = 80, b = 60;
-            let found = false;
-            for (const band of bands) {
-                const dy2 = y - (cy + band.y);
-                if (Math.abs(dy2) < band.w/2) {
-                    const factor = 1 - Math.abs(dy2) / (band.w/2);
-                    const mix = factor * 0.8 + 0.2;
-                    r = r * (1 - mix) + band.color[0] * mix;
-                    g = g * (1 - mix) + band.color[1] * mix;
-                    b = b * (1 - mix) + band.color[2] * mix;
-                    found = true;
-                }
-            }
-            if (!found) { r = 40; g = 30; b = 20; }
-            const dSpot = Math.sqrt((x - spotX)*(x - spotX) + (y - spotY)*(y - spotY));
-            if (dSpot < spotR) {
-                const factor = 1 - dSpot / spotR;
-                r = r * (1 - factor) + spotColor[0] * factor;
-                g = g * (1 - factor) + spotColor[1] * factor;
-                b = b * (1 - factor) + spotColor[2] * factor;
-            }
-            r = Math.max(0, Math.min(255, r));
-            g = Math.max(0, Math.min(255, g));
-            b = Math.max(0, Math.min(255, b));
-            const idx = (y * size + x) * 4;
-            data[idx] = r | 0;
-            data[idx+1] = g | 0;
-            data[idx+2] = b | 0;
-            data[idx+3] = 255;
-        }
-    }
-    return imageData;
+// ClimateInfo - сокращённая информация о климате
+type ClimateInfo struct {
+	ID   string
+	Name string
+	Temp float64
 }
 
-function generateIce(size, rng, params) {
-    const imageData = new ImageData(size, size);
-    const data = imageData.data;
-    const radius = size / 2 - 2;
-    const cx = size / 2, cy = size / 2;
-    const baseR = 180 + rng() * 40;
-    const baseG = 200 + rng() * 40;
-    const baseB = 220 + rng() * 30;
-    const crackCount = 5 + Math.floor(rng() * 10);
-    const cracks = [];
-    for (let i = 0; i < crackCount; i++) {
-        const angle = rng() * 2 * Math.PI;
-        const dist = rng() * radius * 0.8;
-        const x1 = cx + Math.cos(angle) * dist;
-        const y1 = cy + Math.sin(angle) * dist;
-        const angle2 = angle + (rng() - 0.5) * 1.2;
-        const dist2 = dist + (rng() - 0.5) * radius * 0.5;
-        const x2 = cx + Math.cos(angle2) * dist2;
-        const y2 = cy + Math.sin(angle2) * dist2;
-        cracks.push({ x1, y1, x2, y2, width: 1 + rng() * 2 });
-    }
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            const dx = x - cx, dy = y - cy;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist > radius) {
-                const idx = (y * size + x) * 4;
-                data[idx+3] = 0;
-                continue;
-            }
-            let r = baseR, g = baseG, b = baseB;
-            const noise = (Math.sin(x * 0.3 + y * 0.5) * 8 + Math.cos(x * 0.7 - y * 0.2) * 6);
-            r += noise; g += noise; b += noise;
-            for (const cr of cracks) {
-                const dx1 = x - cr.x1, dy1 = y - cr.y1;
-                const dx2 = cr.x2 - cr.x1, dy2 = cr.y2 - cr.y1;
-                const len2 = dx2*dx2 + dy2*dy2;
-                if (len2 === 0) continue;
-                let t = (dx1*dx2 + dy1*dy2) / len2;
-                t = Math.max(0, Math.min(1, t));
-                const projX = cr.x1 + t * dx2;
-                const projY = cr.y1 + t * dy2;
-                const d = Math.sqrt((x - projX)*(x - projX) + (y - projY)*(y - projY));
-                if (d < cr.width) {
-                    const factor = 1 - d / cr.width;
-                    const darken = factor * 30;
-                    r -= darken; g -= darken; b -= darken;
-                }
-            }
-            r = Math.max(0, Math.min(255, r));
-            g = Math.max(0, Math.min(255, g));
-            b = Math.max(0, Math.min(255, b));
-            const idx = (y * size + x) * 4;
-            data[idx] = r | 0;
-            data[idx+1] = g | 0;
-            data[idx+2] = b | 0;
-            data[idx+3] = 255;
-        }
-    }
-    return imageData;
+// ---------- Конструктор ----------
+
+// NewPlanetGenerator создаёт новый генератор с загрузкой климатических данных из JSON-файла
+func NewPlanetGenerator(climateFile string, opts ...func(*PlanetGenerator)) (*PlanetGenerator, error) {
+	data, err := os.ReadFile(climateFile)
+	if err != nil {
+		return nil, err
+	}
+	var climateData ClimateData
+	if err := json.Unmarshal(data, &climateData); err != nil {
+		return nil, err
+	}
+
+	pg := &PlanetGenerator{
+		climates:     climateData.Climates,
+		canvasSize:   64,
+		enableCache:  true,
+		cache:        make(map[string]*CachedPlanet),
+		cacheOrder:   []string{},
+		maxCacheSize: 2000,
+		rand:         rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+
+	// Применяем опции
+	for _, opt := range opts {
+		opt(pg)
+	}
+	return pg, nil
 }
 
-function generateLava(size, rng, params) {
-    const imageData = new ImageData(size, size);
-    const data = imageData.data;
-    const radius = size / 2 - 2;
-    const cx = size / 2, cy = size / 2;
-    const baseR = 20 + rng() * 20;
-    const baseG = 10 + rng() * 10;
-    const baseB = 10 + rng() * 10;
-    const lavaCount = 4 + Math.floor(rng() * 6);
-    const lavas = [];
-    for (let i = 0; i < lavaCount; i++) {
-        const startAngle = rng() * 2 * Math.PI;
-        const startDist = rng() * radius * 0.9;
-        const x1 = cx + Math.cos(startAngle) * startDist;
-        const y1 = cy + Math.sin(startAngle) * startDist;
-        const points = [{x: x1, y: y1}];
-        let curX = x1, curY = y1;
-        for (let j = 0; j < 4 + Math.floor(rng()*3); j++) {
-            const angle = Math.atan2(curY - cy, curX - cx) + (rng() - 0.5) * 1.5;
-            const dist = Math.sqrt((curX-cx)*(curX-cx) + (curY-cy)*(curY-cy));
-            const newDist = dist + (rng() - 0.5) * radius * 0.3;
-            const newX = cx + Math.cos(angle) * newDist;
-            const newY = cy + Math.sin(angle) * newDist;
-            if (Math.sqrt((newX-cx)*(newX-cx) + (newY-cy)*(newY-cy)) > radius) break;
-            points.push({x: newX, y: newY});
-            curX = newX; curY = newY;
-        }
-        lavas.push(points);
-    }
-    for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-            const dx = x - cx, dy = y - cy;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist > radius) {
-                const idx = (y * size + x) * 4;
-                data[idx+3] = 0;
-                continue;
-            }
-            let r = baseR, g = baseG, b = baseB;
-            let lavaGlow = 0;
-            for (const pts of lavas) {
-                for (let i = 0; i < pts.length - 1; i++) {
-                    const p1 = pts[i], p2 = pts[i+1];
-                    const dx1 = x - p1.x, dy1 = y - p1.y;
-                    const dx2 = p2.x - p1.x, dy2 = p2.y - p1.y;
-                    const len2 = dx2*dx2 + dy2*dy2;
-                    if (len2 === 0) continue;
-                    let t = (dx1*dx2 + dy1*dy2) / len2;
-                    t = Math.max(0, Math.min(1, t));
-                    const projX = p1.x + t * dx2;
-                    const projY = p1.y + t * dy2;
-                    const d = Math.sqrt((x - projX)*(x - projX) + (y - projY)*(y - projY));
-                    if (d < 2.5) {
-                        const factor = 1 - d / 2.5;
-                        lavaGlow = Math.max(lavaGlow, factor);
-                    }
-                }
-            }
-            if (lavaGlow > 0) {
-                const lavaR = 255, lavaG = 150 + rng()*50, lavaB = 20 + rng()*30;
-                const mix = lavaGlow * 0.9 + 0.1;
-                r = r * (1 - mix) + lavaR * mix;
-                g = g * (1 - mix) + lavaG * mix;
-                b = b * (1 - mix) + lavaB * mix;
-            }
-            const noise = (Math.sin(x * 0.5 + y * 0.6) * 5 + Math.cos(x * 0.8 - y * 0.4) * 4);
-            r += noise; g += noise; b += noise;
-            r = Math.max(0, Math.min(255, r));
-            g = Math.max(0, Math.min(255, g));
-            b = Math.max(0, Math.min(255, b));
-            const idx = (y * size + x) * 4;
-            data[idx] = r | 0;
-            data[idx+1] = g | 0;
-            data[idx+2] = b | 0;
-            data[idx+3] = 255;
-        }
-    }
-    return imageData;
+// Опции для настройки генератора
+func WithCanvasSize(size int) func(*PlanetGenerator) {
+	return func(pg *PlanetGenerator) { pg.canvasSize = size }
+}
+func WithCacheEnabled(enabled bool) func(*PlanetGenerator) {
+	return func(pg *PlanetGenerator) { pg.enableCache = enabled }
+}
+func WithMaxCacheSize(size int) func(*PlanetGenerator) {
+	return func(pg *PlanetGenerator) { pg.maxCacheSize = size }
+}
+func WithSeed(seed int64) func(*PlanetGenerator) {
+	return func(pg *PlanetGenerator) { pg.rand = rand.New(rand.NewSource(seed)) }
 }
 
-// ----- Основной класс PlanetGenerator с поддержкой климатов -----
+// ---------- Основной метод генерации ----------
 
-export class PlanetGenerator {
-    /**
-     * @param {object} options
-     * @param {number} options.canvasSize - внутренний размер квадрата для генерации (по умолчанию 64)
-     * @param {number} options.maxCacheSize - максимальное количество кэшированных планет (0 = без кэша)
-     * @param {boolean} options.enableCache - включить кэширование (по умолчанию true)
-     * @param {object} options.climateData - объект с климатами (как в вашем JSON)
-     */
-    constructor(options = {}) {
-        this.canvasSize = options.canvasSize || 64;
-        this.maxCacheSize = options.maxCacheSize || 2000;
-        this.enableCache = (options.enableCache !== undefined) ? options.enableCache : true;
-        this.cache = new Map();
-        this.cacheOrder = [];
+// GeneratePlanet генерирует планету по заданным параметрам.
+// Параметры:
+//   - radius: отображаемый радиус (пикселей), рекомендуется 20-50
+//   - starType: спектральный класс звезды (O,B,A,F,G,K,M) – если не указан, выбирается случайно
+//   - climateID: конкретный id климата (если задан, starType игнорируется)
+//   - surface: конкретная поверхность (если не задана, выбирается из allowed)
+//   - hydrosphere: гидросфера (аналогично)
+//   - atmosphere: атмосфера
+//   - biosphere: биосфера
+//   - hasRings: добавить кольца (если true, то всегда добавляются, иначе случайно для газовых)
+func (pg *PlanetGenerator) GeneratePlanet(radius int, opts ...func(*GenerateOptions)) (*CachedPlanet, error) {
+	// Подготовка параметров
+	options := &GenerateOptions{
+		Radius:     radius,
+		StarType:   "",
+		ClimateID:  "",
+		Surface:    "",
+		Hydrosphere: "",
+		Atmosphere: "",
+		Biosphere:  "",
+		HasRings:   nil, // nil = автоматически
+		Seed:       0,   // 0 = случайный
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
 
-        // Сохраняем климатические данные
-        this.climateData = options.climateData || null;
-        if (this.climateData && this.climateData.climates) {
-            this.climates = this.climateData.climates;
-        } else {
-            this.climates = [];
-        }
+	// Если seed не задан, генерируем случайный
+	seed := options.Seed
+	if seed == 0 {
+		seed = pg.rand.Int63()
+	}
+	rng := rand.New(rand.NewSource(seed))
 
-        // Генераторы типов (визуальные)
-        this.generators = {
-            rocky: generateRocky,
-            earth: generateEarth,
-            gas: generateGas,
-            ice: generateIce,
-            lava: generateLava,
-        };
-    }
+	// ---- Выбор климата ----
+	var climate *Climate
+	if options.ClimateID != "" {
+		for i := range pg.climates {
+			if pg.climates[i].ID == options.ClimateID {
+				climate = &pg.climates[i]
+				break
+			}
+		}
+	}
+	if climate == nil {
+		// Выбираем на основе starType (или случайного спектрального класса)
+		starType := options.StarType
+		if starType == "" {
+			starTypes := []string{"O", "B", "A", "F", "G", "K", "M"}
+			starType = starTypes[rng.Intn(len(starTypes))]
+		}
+		climate = pg.selectClimateByStarType(starType, rng)
+	}
 
-    /**
-     * Выбирает климат на основе спектрального типа звезды и весов.
-     * @param {string} starType - 'O','B','A','F','G','K','M' (если не указан, выбирается случайный)
-     * @param {Function} rng - функция случайности
-     * @returns {object} объект климата
-     */
-    _selectClimateByStarType(starType, rng) {
-        if (!this.climates.length) {
-            // Если нет данных, возвращаем фиктивный климат
-            return {
-                id: 'default',
-                name: 'Стандартный',
-                allowed_surfaces: ['скалистая'],
-                allowed_hydrospheres: ['сухая'],
-                allowed_atmospheres: ['разряженная'],
-                allowed_biospheres: ['стерильная'],
-                temperature_min: 200,
-                temperature_max: 400,
-                water_chance: 0,
-                life_chance: 0
-            };
-        }
+	// ---- Выбор характеристик ----
+	surface := options.Surface
+	if surface == "" {
+		surface = pickRandom(climate.AllowedSurfaces, rng)
+	}
+	hydrosphere := options.Hydrosphere
+	if hydrosphere == "" {
+		hydrosphere = pickRandom(climate.AllowedHydrospheres, rng)
+	}
+	atmosphere := options.Atmosphere
+	if atmosphere == "" {
+		atmosphere = pickRandom(climate.AllowedAtmospheres, rng)
+	}
+	biosphere := options.Biosphere
+	if biosphere == "" {
+		biosphere = pickRandom(climate.AllowedBiospheres, rng)
+	}
 
-        // Если starType не задан, выбираем случайный спектральный класс с равной вероятностью
-        const starTypes = ['O','B','A','F','G','K','M'];
-        let type = starType;
-        if (!type || !starTypes.includes(type)) {
-            type = starTypes[Math.floor(rng() * starTypes.length)];
-        }
+	// ---- Вычисление температуры ----
+	tempMin := float64(climate.TemperatureMin)
+	tempMax := float64(climate.TemperatureMax)
+	temperature := tempMin + rng.Float64()*(tempMax-tempMin)
 
-        // Собираем веса для каждого климата для данного типа
-        const weighted = [];
-        for (const climate of this.climates) {
-            const weight = climate.weight && climate.weight[type] ? climate.weight[type] : 0;
-            if (weight > 0) {
-                weighted.push({ climate, weight });
-            }
-        }
-        if (weighted.length === 0) {
-            // Если весов нет, берём первый климат
-            return this.climates[0];
-        }
+	// ---- Определение визуального типа ----
+	visualType := pg.determineVisualType(climate, surface, hydrosphere, temperature, rng)
 
-        // Выбираем случайный климат с учётом весов
-        const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
-        let rand = rng() * totalWeight;
-        for (const item of weighted) {
-            rand -= item.weight;
-            if (rand <= 0) {
-                return item.climate;
-            }
-        }
-        return weighted[weighted.length-1].climate;
-    }
+	// ---- Наличие атмосферы ----
+	hasAtmosphere := (atmosphere != "разряженная" && atmosphere != "")
 
-    /**
-     * Выбирает случайный элемент из массива
-     */
-    _pickRandom(arr, rng) {
-        if (!arr || arr.length === 0) return null;
-        return arr[Math.floor(rng() * arr.length)];
-    }
+	// ---- Кольца ----
+	hasRings := false
+	if options.HasRings != nil {
+		hasRings = *options.HasRings
+	} else {
+		// Для газовых гигантов шанс 40%, для остальных 5%
+		if visualType == "gas" && rng.Float64() < 0.4 {
+			hasRings = true
+		} else if visualType != "gas" && rng.Float64() < 0.05 {
+			hasRings = true
+		}
+	}
 
-    /**
-     * Определяет визуальный тип планеты на основе климатических характеристик.
-     * @param {object} climate - объект климата
-     * @param {string} surface - выбранная поверхность
-     * @param {string} hydrosphere - выбранная гидросфера
-     * @param {number} temperature - средняя температура (можно взять среднюю между min и max)
-     * @param {Function} rng
-     * @returns {string} один из: 'rocky', 'earth', 'gas', 'ice', 'lava'
-     */
-    _determineVisualType(climate, surface, hydrosphere, temperature, rng) {
-        // Приоритет: лавовая, ледяная, водная, иначе скалистая
-        if (surface && surface.includes('лавовая')) {
-            return 'lava';
-        }
-        if (surface && surface.includes('ледяная')) {
-            return 'ice';
-        }
-        if (temperature < 200) {
-            return 'ice';
-        }
-        // Если есть вода (океаны, озёра) и не сухая
-        if (hydrosphere && (hydrosphere.includes('океаны') || hydrosphere.includes('озёра')) && !hydrosphere.includes('сухая')) {
-            return 'earth';
-        }
-        // Если атмосфера плотная и есть признаки жизни -> earth, иначе rocky
-        // Также можно добавить газовые гиганты, но в данных их нет, поэтому игнорируем.
-        return 'rocky';
-    }
+	// ---- Генерация изображения ----
+	size := pg.canvasSize
+	img := pg.generateTexture(visualType, size, rng, options)
 
-    /**
-     * Генерирует планету с учётом климатических данных.
-     * @param {object} params
-     * @param {number} params.radius - отображаемый радиус (20-50)
-     * @param {string} params.starType - спектральный тип звезды (O,B,A,F,G,K,M) – опционально
-     * @param {string} params.climateId - конкретный id климата (если указан, starType игнорируется)
-     * @param {string} params.surface - конкретная поверхность (если не указана, выбирается случайная из allowed)
-     * @param {string} params.hydrosphere - конкретная гидросфера
-     * @param {string} params.atmosphere - конкретная атмосфера
-     * @param {string} params.biosphere - конкретная биосфера
-     * @param {number} params.seed - для детерминизма
-     * @param {boolean} params.hasAtmosphere - переопределить наличие атмосферы (если не указано, берётся из климата)
-     * @param {boolean} params.hasRings - добавить кольца (случайно для газовых)
-     * @returns {object} { image: HTMLCanvasElement, meta: object }
-     */
-    generate(params = {}) {
-        // Создаём RNG
-        const seed = params.seed || (Date.now() + Math.random() * 100000) & 0x7fffffff;
-        const rng = createRNG(seed);
+	// ---- Пост-обработка (тень, блик, атмосфера) ----
+	pg.applyPostProcessing(img, size, visualType, hasAtmosphere, rng)
 
-        // ---- Выбор климата ----
-        let climate = null;
-        if (params.climateId) {
-            // Ищем климат по id
-            climate = this.climates.find(c => c.id === params.climateId);
-            if (!climate) {
-                console.warn(`Климат с id "${params.climateId}" не найден, используется случайный.`);
-            }
-        }
-        if (!climate) {
-            // Если климат не задан или не найден, выбираем на основе starType
-            const starType = params.starType || null;
-            climate = this._selectClimateByStarType(starType, rng);
-        }
+	// ---- Кольца (если есть) ----
+	if hasRings {
+		pg.drawRings(img, size, rng)
+	}
 
-        // ---- Выбор характеристик из allowed ----
-        const surface = params.surface || this._pickRandom(climate.allowed_surfaces, rng) || 'скалистая';
-        const hydrosphere = params.hydrosphere || this._pickRandom(climate.allowed_hydrospheres, rng) || 'сухая';
-        const atmosphere = params.atmosphere || this._pickRandom(climate.allowed_atmospheres, rng) || 'разряженная';
-        const biosphere = params.biosphere || this._pickRandom(climate.allowed_biospheres, rng) || 'стерильная';
+	// ---- Масштабирование до нужного радиуса ----
+	finalImg := pg.scaleImage(img, radius)
 
-        // ---- Вычисление температуры (средняя) ----
-        const tempMin = climate.temperature_min || 200;
-        const tempMax = climate.temperature_max || 400;
-        const temperature = tempMin + rng() * (tempMax - tempMin);
+	// ---- Метаданные ----
+	meta := PlanetMeta{
+		Type:          visualType,
+		Radius:        radius,
+		Seed:          seed,
+		Climate:       ClimateInfo{ID: climate.ID, Name: climate.Name, Temp: temperature},
+		Surface:       surface,
+		Hydrosphere:   hydrosphere,
+		Atmosphere:    atmosphere,
+		Biosphere:     biosphere,
+		HasAtmosphere: hasAtmosphere,
+		HasRings:      hasRings,
+		StarType:      options.StarType,
+		Temperature:   temperature,
+	}
 
-        // ---- Определение визуального типа ----
-        let visualType = this._determineVisualType(climate, surface, hydrosphere, temperature, rng);
+	planet := &CachedPlanet{
+		Image: finalImg,
+		Meta:  meta,
+	}
 
-        // Если мы хотим поддержать газовые гиганты, но их нет в данных, то можно добавить случайно, но мы не будем.
+	// ---- Кэширование (если включено) ----
+	if pg.enableCache {
+		key := hashParams(meta, options)
+		if len(pg.cache) >= pg.maxCacheSize && pg.maxCacheSize > 0 {
+			oldest := pg.cacheOrder[0]
+			delete(pg.cache, oldest)
+			pg.cacheOrder = pg.cacheOrder[1:]
+		}
+		pg.cache[key] = planet
+		pg.cacheOrder = append(pg.cacheOrder, key)
+	}
 
-        // ---- Дополнительные параметры ----
-        const hasAtmosphere = (params.hasAtmosphere !== undefined) ? params.hasAtmosphere : (atmosphere !== 'разряженная' && atmosphere !== '');
-        // Кольца: добавляем для газовых гигантов, но у нас их нет, поэтому только если явно запрошено
-        let hasRings = params.hasRings || false;
-        if (visualType === 'gas' && rng() > 0.6) hasRings = true;
-
-        // ---- Генерация изображения ----
-        const size = this.canvasSize;
-        const generator = this.generators[visualType] || this.generators.rocky;
-        let imageData = generator(size, rng, { ...params, visualType });
-
-        // ---- Пост-обработка ----
-        let atmosphereColor = 'rgba(100,150,255,0.2)';
-        let highlightIntensity = 0.3;
-        let shadowIntensity = 0.6;
-        let atmosphereIntensity = hasAtmosphere ? 0.2 : 0;
-
-        // Настройка под тип
-        if (visualType === 'ice') {
-            atmosphereColor = 'rgba(200,230,255,0.15)';
-            highlightIntensity = 0.8;
-            shadowIntensity = 0.4;
-        } else if (visualType === 'lava') {
-            atmosphereColor = 'rgba(255,100,50,0.25)';
-            highlightIntensity = 0.2;
-            atmosphereIntensity = hasAtmosphere ? 0.15 : 0;
-        } else if (visualType === 'earth') {
-            atmosphereColor = 'rgba(70,150,255,0.2)';
-            highlightIntensity = 0.3;
-        } else if (visualType === 'gas') {
-            atmosphereColor = 'rgba(200,180,150,0.15)';
-            highlightIntensity = 0.2;
-        }
-
-        // Применяем пост-обработку
-        applyPostProcessing(imageData, size, {
-            atmosphereColor,
-            atmosphereIntensity,
-            highlightColor: 'rgba(255,255,255,0.9)',
-            highlightIntensity,
-            shadowIntensity,
-        });
-
-        // ---- Создание канваса ----
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        ctx.putImageData(imageData, 0, 0);
-
-        // ---- Кольца (если есть) ----
-        if (hasRings) {
-            this._drawRings(ctx, size, 'rgba(200,180,150,0.5)', rng);
-        }
-
-        // ---- Масштабирование до требуемого радиуса ----
-        const displaySize = params.radius ? params.radius * 2 : size;
-        const finalCanvas = document.createElement('canvas');
-        finalCanvas.width = displaySize;
-        finalCanvas.height = displaySize;
-        const finalCtx = finalCanvas.getContext('2d');
-        finalCtx.imageSmoothingEnabled = true;
-        finalCtx.imageSmoothingQuality = 'high';
-        finalCtx.drawImage(canvas, 0, 0, displaySize, displaySize);
-
-        // ---- Формирование результата ----
-        const result = {
-            image: finalCanvas,
-            meta: {
-                type: visualType,
-                radius: params.radius || size/2,
-                seed: seed,
-                climate: {
-                    id: climate.id,
-                    name: climate.name,
-                    temperature: temperature,
-                },
-                surface,
-                hydrosphere,
-                atmosphere,
-                biosphere,
-                hasAtmosphere,
-                hasRings,
-                starType: params.starType || null,
-            }
-        };
-
-        // ---- Кэширование ----
-        if (this.enableCache) {
-            const cacheKey = hashParams({
-                visualType,
-                radius: params.radius,
-                seed,
-                climate: climate.id,
-                surface,
-                hydrosphere,
-                atmosphere,
-                biosphere,
-                hasAtmosphere,
-                hasRings,
-            });
-            if (this.cache.size >= this.maxCacheSize && this.maxCacheSize > 0) {
-                const oldest = this.cacheOrder.shift();
-                this.cache.delete(oldest);
-            }
-            this.cache.set(cacheKey, result);
-            this.cacheOrder.push(cacheKey);
-        }
-
-        return result;
-    }
-
-    /**
-     * Рисует кольца на канвасе (поверх планеты)
-     */
-    _drawRings(ctx, size, color, rng) {
-        const cx = size/2, cy = size/2;
-        const radius = size/2 - 2;
-        const ringOuter = radius * 1.6;
-        const ringInner = radius * 1.1;
-        const tilt = 0.3 + rng() * 0.4;
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.scale(1, tilt);
-        ctx.rotate(0.2 + rng() * 0.3);
-        const baseColor = parseColor(color);
-        const alpha = 0.3 + rng() * 0.3;
-        const grad = ctx.createRadialGradient(0, 0, ringInner, 0, 0, ringOuter);
-        grad.addColorStop(0, `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},0)`);
-        grad.addColorStop(0.3, `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},${alpha})`);
-        grad.addColorStop(0.7, `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},${alpha*0.8})`);
-        grad.addColorStop(1, `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},0)`);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, ringOuter, ringOuter * 0.25, 0, 0, Math.PI * 2);
-        ctx.fillStyle = grad;
-        ctx.fill();
-        const grad2 = ctx.createRadialGradient(0, 0, ringInner*0.9, 0, 0, ringInner*1.1);
-        grad2.addColorStop(0, 'rgba(0,0,0,0)');
-        grad2.addColorStop(0.5, `rgba(${baseColor[0]},${baseColor[1]},${baseColor[2]},${alpha*0.3})`);
-        grad2.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.beginPath();
-        ctx.ellipse(0, 0, ringInner*1.1, ringInner*1.1*0.25, 0, 0, Math.PI * 2);
-        ctx.fillStyle = grad2;
-        ctx.fill();
-        ctx.restore();
-    }
-
-    /**
-     * Генерирует множество планет (для предварительной загрузки)
-     * @param {number} count - количество
-     * @param {function} onProgress - колбэк (progress) => void
-     * @param {object} baseParams - общие параметры для всех (можно передать starType, climateId и т.д.)
-     * @returns {array} массив результатов
-     */
-    generateMany(count, onProgress = null, baseParams = {}) {
-        const results = [];
-        for (let i = 0; i < count; i++) {
-            const params = {
-                ...baseParams,
-                seed: (baseParams.seed || 0) + i * 1000 + Math.random() * 1000,
-                radius: baseParams.radius || (20 + Math.random() * 30),
-            };
-            if (!params.climateId && !params.starType) {
-                // Если ничего не задано, можно выбрать случайный климат (без привязки к звезде)
-                // Но мы можем просто не передавать starType, тогда _selectClimateByStarType выберет случайный тип звезды
-            }
-            const planet = this.generate(params);
-            results.push(planet);
-            if (onProgress) {
-                onProgress((i+1) / count);
-            }
-        }
-        return results;
-    }
-
-    /**
-     * Очищает кэш
-     */
-    clearCache() {
-        this.cache.clear();
-        this.cacheOrder = [];
-    }
-
-    _updateCacheOrder(key) {
-        const index = this.cacheOrder.indexOf(key);
-        if (index > -1) {
-            this.cacheOrder.splice(index, 1);
-            this.cacheOrder.push(key);
-        }
-    }
+	return planet, nil
 }
 
-export default PlanetGenerator;
+// ---------- Вспомогательные методы ----------
+
+// selectClimateByStarType выбирает климат на основе спектрального типа и весов
+func (pg *PlanetGenerator) selectClimateByStarType(starType string, rng *rand.Rand) *Climate {
+	type weightedClimate struct {
+		climate *Climate
+		weight  float64
+	}
+	var weighted []weightedClimate
+	for i := range pg.climates {
+		c := &pg.climates[i]
+		var w float64
+		switch starType {
+		case "O":
+			w = c.Weight.O
+		case "B":
+			w = c.Weight.B
+		case "A":
+			w = c.Weight.A
+		case "F":
+			w = c.Weight.F
+		case "G":
+			w = c.Weight.G
+		case "K":
+			w = c.Weight.K
+		case "M":
+			w = c.Weight.M
+		default:
+			w = 0
+		}
+		if w > 0 {
+			weighted = append(weighted, weightedClimate{climate: c, weight: w})
+		}
+	}
+	if len(weighted) == 0 {
+		// fallback: первый климат
+		return &pg.climates[0]
+	}
+	// Случайный выбор с учётом весов
+	total := 0.0
+	for _, wc := range weighted {
+		total += wc.weight
+	}
+	r := rng.Float64() * total
+	for _, wc := range weighted {
+		r -= wc.weight
+		if r <= 0 {
+			return wc.climate
+		}
+	}
+	return weighted[len(weighted)-1].climate
+}
+
+// pickRandom выбирает случайный элемент из среза
+func pickRandom(list []string, rng *rand.Rand) string {
+	if len(list) == 0 {
+		return ""
+	}
+	return list[rng.Intn(len(list))]
+}
+
+// determineVisualType определяет визуальный тип планеты на основе климата, поверхности, гидросферы и температуры
+func (pg *PlanetGenerator) determineVisualType(climate *Climate, surface, hydrosphere string, temperature float64, rng *rand.Rand) string {
+	// Приоритет: лавовая, ледяная, водная, иначе скалистая
+	if surface == "лавовая" {
+		return "lava"
+	}
+	if surface == "ледяная" {
+		return "ice"
+	}
+	if temperature < 200 {
+		return "ice"
+	}
+	// Если есть вода (океаны, озёра) и не сухая
+	if hydrosphere == "океаны" || hydrosphere == "озёра" {
+		return "earth"
+	}
+	// Если плотная атмосфера и есть признаки жизни -> earth, иначе rocky
+	// Также можно добавить газовые гиганты, но в данных их нет, поэтому оставим rocky
+	return "rocky"
+}
+
+// generateTexture создаёт текстуру планеты (без пост-эффектов) на основе визуального типа
+func (pg *PlanetGenerator) generateTexture(visualType string, size int, rng *rand.Rand, opts *GenerateOptions) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	radius := float64(size)/2 - 2
+	cx, cy := float64(size)/2, float64(size)/2
+
+	// Заполняем прозрачным фоном
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist > radius {
+				img.SetRGBA(x, y, color.RGBA{0, 0, 0, 0})
+			}
+		}
+	}
+
+	switch visualType {
+	case "rocky":
+		pg.generateRocky(img, size, rng)
+	case "earth":
+		pg.generateEarth(img, size, rng)
+	case "ice":
+		pg.generateIce(img, size, rng)
+	case "lava":
+		pg.generateLava(img, size, rng)
+	case "gas":
+		pg.generateGas(img, size, rng)
+	default:
+		pg.generateRocky(img, size, rng)
+	}
+	return img
+}
+
+// ---------- Генераторы конкретных типов (все работают с image.RGBA) ----------
+
+func (pg *PlanetGenerator) generateRocky(img *image.RGBA, size int, rng *rand.Rand) {
+	radius := float64(size)/2 - 2
+	cx, cy := float64(size)/2, float64(size)/2
+	baseR := uint8(100 + rng.Intn(60))
+	baseG := uint8(80 + rng.Intn(50))
+	baseB := uint8(60 + rng.Intn(40))
+
+	// Кратеры
+	craterCount := 3 + rng.Intn(8)
+	type crater struct{ x, y, r float64; depth float64 }
+	craters := make([]crater, craterCount)
+	for i := 0; i < craterCount; i++ {
+		angle := rng.Float64() * 2 * math.Pi
+		dist := rng.Float64() * radius * 0.8
+		craters[i] = crater{
+			x: cx + math.Cos(angle)*dist,
+			y: cy + math.Sin(angle)*dist,
+			r: 2 + rng.Float64()*6,
+			depth: 0.3 + rng.Float64()*0.5,
+		}
+	}
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist > radius {
+				continue
+			}
+			// Шум
+			noise1 := math.Sin(float64(x)*0.2+float64(y)*0.3)*10 + math.Cos(float64(x)*0.4-float64(y)*0.5)*8
+			noise2 := math.Sin(float64(x)*0.7+float64(y)*0.9)*5
+			r := float64(baseR) + noise1 + noise2
+			g := float64(baseG) + noise1*0.8 + noise2*0.6
+			b := float64(baseB) + noise1*0.5 + noise2*0.4
+
+			// Кратеры
+			for _, cr := range craters {
+				ddx := float64(x) - cr.x
+				ddy := float64(y) - cr.y
+				d := math.Sqrt(ddx*ddx + ddy*ddy)
+				if d < cr.r {
+					factor := 1 - d/cr.r
+					darken := factor * cr.depth * 30
+					r -= darken
+					g -= darken
+					b -= darken
+					if d > cr.r*0.7 {
+						rim := (d - cr.r*0.7) / (cr.r * 0.3) * 10
+						r += rim
+						g += rim
+						b += rim
+					}
+				}
+			}
+			clamp := func(v float64) uint8 {
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
+				return uint8(v)
+			}
+			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
+		}
+	}
+}
+
+func (pg *PlanetGenerator) generateEarth(img *image.RGBA, size int, rng *rand.Rand) {
+	radius := float64(size)/2 - 2
+	cx, cy := float64(size)/2, float64(size)/2
+	oceanR := uint8(20 + rng.Intn(30))
+	oceanG := uint8(60 + rng.Intn(50))
+	oceanB := uint8(120 + rng.Intn(60))
+
+	// Континенты
+	type continent struct{ x, y, r float64; color [3]uint8 }
+	numContinents := 3 + rng.Intn(4)
+	continents := make([]continent, numContinents)
+	for i := 0; i < numContinents; i++ {
+		angle := rng.Float64() * 2 * math.Pi
+		dist := rng.Float64() * radius * 0.7
+		continents[i] = continent{
+			x: cx + math.Cos(angle)*dist,
+			y: cy + math.Sin(angle)*dist,
+			r: 5 + rng.Float64()*15,
+			color: [3]uint8{
+				uint8(50 + rng.Intn(80)),
+				uint8(100 + rng.Intn(70)),
+				uint8(30 + rng.Intn(50)),
+			},
+		}
+	}
+
+	// Облака
+	type cloud struct{ x, y, r, alpha float64 }
+	numClouds := 2 + rng.Intn(5)
+	clouds := make([]cloud, numClouds)
+	for i := 0; i < numClouds; i++ {
+		angle := rng.Float64() * 2 * math.Pi
+		dist := rng.Float64() * radius * 0.8
+		clouds[i] = cloud{
+			x: cx + math.Cos(angle)*dist,
+			y: cy + math.Sin(angle)*dist,
+			r: 4 + rng.Float64()*12,
+			alpha: 0.1 + rng.Float64()*0.3,
+		}
+	}
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist > radius {
+				continue
+			}
+			r := float64(oceanR)
+			g := float64(oceanG)
+			b := float64(oceanB)
+
+			// Континенты
+			for _, cont := range continents {
+				ddx := float64(x) - cont.x
+				ddy := float64(y) - cont.y
+				d := math.Sqrt(ddx*ddx + ddy*ddy)
+				if d < cont.r {
+					factor := 1 - d/cont.r
+					blend := factor*factor*0.9 + 0.1
+					r = r*(1-blend) + float64(cont.color[0])*blend
+					g = g*(1-blend) + float64(cont.color[1])*blend
+					b = b*(1-blend) + float64(cont.color[2])*blend
+				}
+			}
+			// Шум
+			noise := math.Sin(float64(x)*0.5+float64(y)*0.7)*5 + math.Cos(float64(x)*0.9-float64(y)*0.3)*4
+			r += noise
+			g += noise
+			b += noise
+
+			// Облака
+			for _, cl := range clouds {
+				ddx := float64(x) - cl.x
+				ddy := float64(y) - cl.y
+				d := math.Sqrt(ddx*ddx + ddy*ddy)
+				if d < cl.r {
+					factor := 1 - d/cl.r
+					alpha := factor * cl.alpha
+					r = r*(1-alpha) + 255*alpha
+					g = g*(1-alpha) + 255*alpha
+					b = b*(1-alpha) + 255*alpha
+				}
+			}
+			clamp := func(v float64) uint8 {
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
+				return uint8(v)
+			}
+			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
+		}
+	}
+}
+
+func (pg *PlanetGenerator) generateIce(img *image.RGBA, size int, rng *rand.Rand) {
+	radius := float64(size)/2 - 2
+	cx, cy := float64(size)/2, float64(size)/2
+	baseR := uint8(180 + rng.Intn(40))
+	baseG := uint8(200 + rng.Intn(40))
+	baseB := uint8(220 + rng.Intn(30))
+
+	// Трещины
+	type crack struct{ x1, y1, x2, y2, width float64 }
+	crackCount := 5 + rng.Intn(10)
+	cracks := make([]crack, crackCount)
+	for i := 0; i < crackCount; i++ {
+		angle := rng.Float64() * 2 * math.Pi
+		dist := rng.Float64() * radius * 0.8
+		x1 := cx + math.Cos(angle)*dist
+		y1 := cy + math.Sin(angle)*dist
+		angle2 := angle + (rng.Float64()-0.5)*1.2
+		dist2 := dist + (rng.Float64()-0.5)*radius*0.5
+		x2 := cx + math.Cos(angle2)*dist2
+		y2 := cy + math.Sin(angle2)*dist2
+		cracks[i] = crack{x1, y1, x2, y2, 1 + rng.Float64()*2}
+	}
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist > radius {
+				continue
+			}
+			r := float64(baseR)
+			g := float64(baseG)
+			b := float64(baseB)
+			noise := math.Sin(float64(x)*0.3+float64(y)*0.5)*8 + math.Cos(float64(x)*0.7-float64(y)*0.2)*6
+			r += noise
+			g += noise
+			b += noise
+
+			// Трещины
+			for _, cr := range cracks {
+				// расстояние от точки до отрезка
+				dx1 := float64(x) - cr.x1
+				dy1 := float64(y) - cr.y1
+				dx2 := cr.x2 - cr.x1
+				dy2 := cr.y2 - cr.y1
+				len2 := dx2*dx2 + dy2*dy2
+				if len2 == 0 {
+					continue
+				}
+				t := (dx1*dx2 + dy1*dy2) / len2
+				if t < 0 {
+					t = 0
+				}
+				if t > 1 {
+					t = 1
+				}
+				projX := cr.x1 + t*dx2
+				projY := cr.y1 + t*dy2
+				d := math.Sqrt((float64(x)-projX)*(float64(x)-projX) + (float64(y)-projY)*(float64(y)-projY))
+				if d < cr.width {
+					factor := 1 - d/cr.width
+					darken := factor * 30
+					r -= darken
+					g -= darken
+					b -= darken
+				}
+			}
+			clamp := func(v float64) uint8 {
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
+				return uint8(v)
+			}
+			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
+		}
+	}
+}
+
+func (pg *PlanetGenerator) generateLava(img *image.RGBA, size int, rng *rand.Rand) {
+	radius := float64(size)/2 - 2
+	cx, cy := float64(size)/2, float64(size)/2
+	baseR := uint8(20 + rng.Intn(20))
+	baseG := uint8(10 + rng.Intn(10))
+	baseB := uint8(10 + rng.Intn(10))
+
+	// Лавовые трещины (извилистые линии)
+	lavaCount := 4 + rng.Intn(6)
+	lavas := make([][]struct{ x, y float64 }, lavaCount)
+	for i := 0; i < lavaCount; i++ {
+		startAngle := rng.Float64() * 2 * math.Pi
+		startDist := rng.Float64() * radius * 0.9
+		x1 := cx + math.Cos(startAngle)*startDist
+		y1 := cy + math.Sin(startAngle)*startDist
+		points := []struct{ x, y float64 }{{x1, y1}}
+		curX, curY := x1, y1
+		for j := 0; j < 4+rng.Intn(3); j++ {
+			angle := math.Atan2(curY-cy, curX-cx) + (rng.Float64()-0.5)*1.5
+			dist := math.Sqrt((curX-cx)*(curX-cx) + (curY-cy)*(curY-cy))
+			newDist := dist + (rng.Float64()-0.5)*radius*0.3
+			newX := cx + math.Cos(angle)*newDist
+			newY := cy + math.Sin(angle)*newDist
+			if math.Sqrt((newX-cx)*(newX-cx)+(newY-cy)*(newY-cy)) > radius {
+				break
+			}
+			points = append(points, struct{ x, y float64 }{newX, newY})
+			curX, curY = newX, newY
+		}
+		lavas[i] = points
+	}
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist > radius {
+				continue
+			}
+			r := float64(baseR)
+			g := float64(baseG)
+			b := float64(baseB)
+
+			lavaGlow := 0.0
+			for _, pts := range lavas {
+				for i := 0; i < len(pts)-1; i++ {
+					p1, p2 := pts[i], pts[i+1]
+					dx1 := float64(x) - p1.x
+					dy1 := float64(y) - p1.y
+					dx2 := p2.x - p1.x
+					dy2 := p2.y - p1.y
+					len2 := dx2*dx2 + dy2*dy2
+					if len2 == 0 {
+						continue
+					}
+					t := (dx1*dx2 + dy1*dy2) / len2
+					if t < 0 {
+						t = 0
+					}
+					if t > 1 {
+						t = 1
+					}
+					projX := p1.x + t*dx2
+					projY := p1.y + t*dy2
+					d := math.Sqrt((float64(x)-projX)*(float64(x)-projX) + (float64(y)-projY)*(float64(y)-projY))
+					if d < 2.5 {
+						factor := 1 - d/2.5
+						if factor > lavaGlow {
+							lavaGlow = factor
+						}
+					}
+				}
+			}
+			if lavaGlow > 0 {
+				lavaR := 255.0
+				lavaG := 150.0 + rng.Float64()*50
+				lavaB := 20.0 + rng.Float64()*30
+				mix := lavaGlow*0.9 + 0.1
+				r = r*(1-mix) + lavaR*mix
+				g = g*(1-mix) + lavaG*mix
+				b = b*(1-mix) + lavaB*mix
+			}
+			noise := math.Sin(float64(x)*0.5+float64(y)*0.6)*5 + math.Cos(float64(x)*0.8-float64(y)*0.4)*4
+			r += noise
+			g += noise
+			b += noise
+			clamp := func(v float64) uint8 {
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
+				return uint8(v)
+			}
+			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
+		}
+	}
+}
+
+func (pg *PlanetGenerator) generateGas(img *image.RGBA, size int, rng *rand.Rand) {
+	radius := float64(size)/2 - 2
+	cx, cy := float64(size)/2, float64(size)/2
+
+	// Полосы с разным наклоном (случайный угол)
+	// Угол наклона (в радианах) от -0.8 до 0.8
+	tiltAngle := (rng.Float64() - 0.5) * 1.6
+	cosA := math.Cos(tiltAngle)
+	sinA := math.Sin(tiltAngle)
+
+	numBands := 4 + rng.Intn(6)
+	type band struct {
+		pos   float64 // положение вдоль оси, перпендикулярной полосам
+		width float64
+		color color.RGBA
+	}
+	bands := make([]band, numBands)
+	baseHue := 10 + rng.Intn(40)
+	for i := 0; i < numBands; i++ {
+		// Позиция: от -radius до radius
+		pos := -radius + (float64(i)/float64(numBands-1))*2*radius
+		width := 3 + rng.Float64()*8
+		// Цвет: вариация оттенка
+		hue := baseHue + rng.Intn(30) - 15
+		sat := 80
+		lig := 40 + rng.Intn(30)
+		// Преобразуем HSL в RGB (упрощённо)
+		r, g, b := hslToRgb(hue, sat, lig)
+		bands[i] = band{pos, width, color.RGBA{r, g, b, 255}}
+	}
+
+	// Большое пятно (вихрь)
+	spotX := cx + (rng.Float64()-0.5)*radius*0.8
+	spotY := cy + (rng.Float64()-0.5)*radius*0.6
+	spotR := 3 + rng.Float64()*8
+	spotCol := hslToRgb(int(baseHue+20), 90, 60)
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist > radius {
+				continue
+			}
+			// Преобразуем координаты в систему, где полосы горизонтальны
+			// Поворачиваем точку на угол -tiltAngle, чтобы полосы стали горизонтальными
+			// Координата вдоль оси X не важна, важна координата Y' (перпендикулярно полосам)
+			xRot := dx*cosA + dy*sinA
+			yRot := -dx*sinA + dy*cosA
+
+			// Определяем, в какой полосе находится пиксель
+			r, g, b := float64(40), float64(30), float64(20) // фон
+			for _, band := range bands {
+				// Расстояние по Y' от центра полосы
+				dyBand := yRot - band.pos
+				if math.Abs(dyBand) < band.width/2 {
+					factor := 1 - math.Abs(dyBand)/(band.width/2)
+					mix := factor*0.8 + 0.2
+					br := float64(band.color.R)
+					bg := float64(band.color.G)
+					bb := float64(band.color.B)
+					r = r*(1-mix) + br*mix
+					g = g*(1-mix) + bg*mix
+					b = b*(1-mix) + bb*mix
+				}
+			}
+
+			// Пятно
+			dSpot := math.Sqrt((float64(x)-spotX)*(float64(x)-spotX) + (float64(y)-spotY)*(float64(y)-spotY))
+			if dSpot < spotR {
+				factor := 1 - dSpot/spotR
+				r = r*(1-factor) + float64(spotCol.R)*factor
+				g = g*(1-factor) + float64(spotCol.G)*factor
+				b = b*(1-factor) + float64(spotCol.B)*factor
+			}
+
+			clamp := func(v float64) uint8 {
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
+				return uint8(v)
+			}
+			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
+		}
+	}
+}
+
+// Вспомогательная функция преобразования HSL в RGB (упрощённая)
+func hslToRgb(h, s, l int) (uint8, uint8, uint8) {
+	// h: 0-360, s: 0-100, l: 0-100
+	H := float64(h) / 360.0
+	S := float64(s) / 100.0
+	L := float64(l) / 100.0
+	var r, g, b float64
+	if S == 0 {
+		r, g, b = L, L, L
+	} else {
+		var hue2rgb func(p, q, t float64) float64
+		hue2rgb = func(p, q, t float64) float64 {
+			if t < 0 {
+				t += 1
+			}
+			if t > 1 {
+				t -= 1
+			}
+			if t < 1.0/6.0 {
+				return p + (q-p)*6*t
+			}
+			if t < 1.0/2.0 {
+				return q
+			}
+			if t < 2.0/3.0 {
+				return p + (q-p)*(2.0/3.0-t)*6
+			}
+			return p
+		}
+		q := 0.0
+		if L < 0.5 {
+			q = L * (1 + S)
+		} else {
+			q = L + S - L*S
+		}
+		p := 2*L - q
+		r = hue2rgb(p, q, H+1.0/3.0)
+		g = hue2rgb(p, q, H)
+		b = hue2rgb(p, q, H-1.0/3.0)
+	}
+	return uint8(r * 255), uint8(g * 255), uint8(b * 255)
+}
+
+// ---------- Пост-обработка ----------
+
+func (pg *PlanetGenerator) applyPostProcessing(img *image.RGBA, size int, visualType string, hasAtmosphere bool, rng *rand.Rand) {
+	radius := float64(size)/2 - 2
+	cx, cy := float64(size)/2, float64(size)/2
+
+	// Определяем параметры эффектов в зависимости от типа
+	shadowStrength := 0.6
+	highlightStrength := 0.3
+	atmStrength := 0.0
+	atmColor := color.RGBA{100, 150, 255, 50}
+	highlightColor := color.RGBA{255, 255, 255, 230}
+
+	if hasAtmosphere {
+		atmStrength = 0.2
+	}
+	switch visualType {
+	case "ice":
+		atmColor = color.RGBA{200, 230, 255, 40}
+		highlightStrength = 0.8
+		shadowStrength = 0.4
+	case "lava":
+		atmColor = color.RGBA{255, 100, 50, 60}
+		highlightStrength = 0.2
+		shadowStrength = 0.6
+		if hasAtmosphere {
+			atmStrength = 0.15
+		}
+	case "earth":
+		atmColor = color.RGBA{70, 150, 255, 50}
+		highlightStrength = 0.3
+		shadowStrength = 0.6
+	case "gas":
+		atmColor = color.RGBA{200, 180, 150, 40}
+		highlightStrength = 0.2
+		shadowStrength = 0.6
+	}
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			dist := math.Sqrt(dx*dx + dy*dy)
+			normDist := dist / radius
+
+			if normDist > 1.2 {
+				// За пределами планеты делаем прозрачным
+				img.SetRGBA(x, y, color.RGBA{0, 0, 0, 0})
+				continue
+			}
+			if normDist > 1 {
+				// Внешняя атмосфера (свечение)
+				if hasAtmosphere && atmStrength > 0 {
+					outer := (normDist - 1) / 0.2
+					alpha := float64(atmColor.A) / 255.0 * (1 - outer) * 0.5
+					c := img.RGBAAt(x, y)
+					r := float64(c.R)*(1-alpha) + float64(atmColor.R)*alpha
+					g := float64(c.G)*(1-alpha) + float64(atmColor.G)*alpha
+					b := float64(c.B)*(1-alpha) + float64(atmColor.B)*alpha
+					img.SetRGBA(x, y, color.RGBA{uint8(r), uint8(g), uint8(b), uint8(float64(c.A)*(1-alpha) + 255*alpha)})
+				}
+				continue
+			}
+
+			// Получаем текущий цвет
+			c := img.RGBAAt(x, y)
+
+			// ---- Сферическая тень ----
+			// Направление света: (-0.5, -0.4, 0.2)
+			lightX, lightY, lightZ := -0.5, -0.4, 0.2
+			lenL := math.Sqrt(lightX*lightX + lightY*lightY + lightZ*lightZ)
+			nx, ny, nz := lightX/lenL, lightY/lenL, lightZ/lenL
+
+			// Нормаль к сфере
+			z := math.Sqrt(math.Max(0, radius*radius-dx*dx-dy*dy))
+			normLen := math.Sqrt(dx*dx + dy*dy + z*z)
+			if normLen == 0 {
+				continue
+			}
+			normDx, normDy, normDz := dx/normLen, dy/normLen, z/normLen
+			diffuse := normDx*nx + normDy*ny + normDz*nz
+			if diffuse < 0 {
+				diffuse = 0
+			}
+			if diffuse > 1 {
+				diffuse = 1
+			}
+			shadow := 1 - shadowStrength*(1-diffuse)
+			r := float64(c.R) * shadow
+			g := float64(c.G) * shadow
+			b := float64(c.B) * shadow
+
+			// ---- Блик ----
+			reflectX := 2*diffuse*normDx - nx
+			reflectY := 2*diffuse*normDy - ny
+			reflectZ := 2*diffuse*normDz - nz
+			spec := math.Max(0, reflectZ)
+			specIntensity := math.Pow(spec, 20) * highlightStrength * 2
+			if specIntensity > 0.01 {
+				hr := float64(highlightColor.R)
+				hg := float64(highlightColor.G)
+				hb := float64(highlightColor.B)
+				r = r + (hr-r)*specIntensity
+				g = g + (hg-g)*specIntensity
+				b = b + (hb-b)*specIntensity
+			}
+
+			// ---- Внутренняя атмосфера (у края) ----
+			if hasAtmosphere && atmStrength > 0 && normDist > 0.7 {
+				edge := (normDist - 0.7) / 0.3
+				atmAlpha := atmStrength * edge * 0.8
+				ar := float64(atmColor.R)
+				ag := float64(atmColor.G)
+				ab := float64(atmColor.B)
+				r = r*(1-atmAlpha) + ar*atmAlpha
+				g = g*(1-atmAlpha) + ag*atmAlpha
+				b = b*(1-atmAlpha) + ab*atmAlpha
+			}
+
+			clamp := func(v float64) uint8 {
+				if v < 0 {
+					return 0
+				}
+				if v > 255 {
+					return 255
+				}
+				return uint8(v)
+			}
+			img.SetRGBA(x, y, color.RGBA{clamp(r), clamp(g), clamp(b), 255})
+		}
+	}
+}
+
+// ---------- Кольца ----------
+
+func (pg *PlanetGenerator) drawRings(img *image.RGBA, size int, rng *rand.Rand) {
+	// Рисуем кольца поверх планеты
+	// Используем отдельный слой и смешиваем
+	// Создаём временное изображение для колец
+	ringImg := image.NewRGBA(img.Bounds())
+	cx, cy := float64(size)/2, float64(size)/2
+	radius := float64(size)/2 - 2
+
+	// Параметры колец
+	ringOuter := radius * 1.6
+	ringInner := radius * 1.1
+	tilt := 0.3 + rng.Float64()*0.4
+	rotation := 0.2 + rng.Float64()*0.3
+	alpha := 0.3 + rng.Float64()*0.3
+
+	// Создаём градиент для колец
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			// Преобразуем координаты с учётом наклона и поворота
+			dx := float64(x) - cx
+			dy := float64(y) - cy
+			// Поворот
+			cosR := math.Cos(rotation)
+			sinR := math.Sin(rotation)
+			xRot := dx*cosR - dy*sinR
+			yRot := dx*sinR + dy*cosR
+			// Наклон (сжатие по Y)
+			yRot = yRot * (1 / tilt)
+
+			// Расстояние от центра
+			dist := math.Sqrt(xRot*xRot + yRot*yRot)
+			if dist >= ringInner && dist <= ringOuter {
+				// Нормализованное положение в кольце (0..1)
+				pos := (dist - ringInner) / (ringOuter - ringInner)
+				// Прозрачность: fade in/out
+				fade := 1.0
+				if pos < 0.1 {
+					fade = pos / 0.1
+				} else if pos > 0.8 {
+					fade = 1 - (pos-0.8)/0.2
+				}
+				if fade < 0 {
+					fade = 0
+				}
+				// Цвет колец (желтовато-серый)
+				baseColor := color.RGBA{200, 180, 150, uint8(alpha * 255 * fade)}
+				// Смешиваем с существующим пикселем
+				c := img.RGBAAt(x, y)
+				// Если пиксель за пределами планеты, он прозрачный, тогда просто ставим цвет колец
+				if c.A == 0 {
+					img.SetRGBA(x, y, baseColor)
+				} else {
+					// Смешивание по alpha
+					sa := float64(baseColor.A) / 255.0
+					da := float64(c.A) / 255.0
+					outA := sa + da*(1-sa)
+					if outA > 0 {
+						r := (float64(baseColor.R)*sa + float64(c.R)*da*(1-sa)) / outA
+						g := (float64(baseColor.G)*sa + float64(c.G)*da*(1-sa)) / outA
+						b := (float64(baseColor.B)*sa + float64(c.B)*da*(1-sa)) / outA
+						img.SetRGBA(x, y, color.RGBA{uint8(r), uint8(g), uint8(b), uint8(outA * 255)})
+					}
+				}
+			}
+		}
+	}
+}
+
+// ---------- Масштабирование ----------
+
+func (pg *PlanetGenerator) scaleImage(src *image.RGBA, targetRadius int) *image.RGBA {
+	srcSize := src.Bounds().Dx()
+	targetSize := targetRadius * 2
+	if targetSize == srcSize {
+		return src
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, targetSize, targetSize))
+	// Простое масштабирование (ближайший сосед для скорости, можно добавить билинейную)
+	for y := 0; y < targetSize; y++ {
+		for x := 0; x < targetSize; x++ {
+			srcX := int(float64(x) * float64(srcSize) / float64(targetSize))
+			srcY := int(float64(y) * float64(srcSize) / float64(targetSize))
+			if srcX >= srcSize {
+				srcX = srcSize - 1
+			}
+			if srcY >= srcSize {
+				srcY = srcSize - 1
+			}
+			dst.SetRGBA(x, y, src.RGBAAt(srcX, srcY))
+		}
+	}
+	return dst
+}
+
+// ---------- Кэширование ----------
+
+func hashParams(meta PlanetMeta, opts *GenerateOptions) string {
+	// Простой хеш: конкатенация ключевых полей
+	return fmt.Sprintf("%d-%s-%s-%s-%s-%s-%v-%v",
+		meta.Seed,
+		meta.Type,
+		meta.Surface,
+		meta.Hydrosphere,
+		meta.Atmosphere,
+		meta.Biosphere,
+		meta.HasAtmosphere,
+		meta.HasRings,
+	)
+}
+
+// ---------- Дополнительные типы ----------
+
+// GenerateOptions - параметры для генерации (аналогичны передаваемым опциям)
+type GenerateOptions struct {
+	Radius      int
+	StarType    string
+	ClimateID   string
+	Surface     string
+	Hydrosphere string
+	Atmosphere  string
+	Biosphere   string
+	HasRings    *bool
+	Seed        int64
+}
+
+// Опции для удобства
+func WithStarType(starType string) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.StarType = starType }
+}
+func WithClimateID(id string) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.ClimateID = id }
+}
+func WithSurface(s string) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.Surface = s }
+}
+func WithHydrosphere(s string) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.Hydrosphere = s }
+}
+func WithAtmosphere(s string) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.Atmosphere = s }
+}
+func WithBiosphere(s string) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.Biosphere = s }
+}
+func WithRings(has bool) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.HasRings = &has }
+}
+func WithSeed(seed int64) func(*GenerateOptions) {
+	return func(o *GenerateOptions) { o.Seed = seed }
+}
