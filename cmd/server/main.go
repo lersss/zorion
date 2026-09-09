@@ -91,6 +91,9 @@ func main() {
 	// API планет
 	http.HandleFunc("/api/worlds/", auth.AuthMiddleware(adminHandlers.GetPlanetsByWorld))
 
+	// API фильтрации миров
+	http.HandleFunc("/api/worlds/filter", auth.AuthMiddleware(adminHandlers.FilterWorldsHandler))
+
 	// WebSocket
 	http.HandleFunc("/ws", auth.AuthMiddleware(wsHandler.ServeWS))
 
@@ -109,9 +112,6 @@ func main() {
 		http.ServeFile(w, r, "./web/admin.html")
 	})
 
-	// API изображения планет
-	http.HandleFunc("/api/planet-image", handlers.PlanetImageHandler)
-	
 	// Статика
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./web/static"))))
 
