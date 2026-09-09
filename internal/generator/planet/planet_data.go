@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"zorion/internal/generator/resource"
+	"zorion/internal/models"
 	"zorion/internal/names"
 	"zorion/internal/repository"
 )
@@ -56,7 +57,8 @@ func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, tempe
 
 	planets := make([]*PlanetData, 0, planetCount)
 	for i := 0; i < planetCount; i++ {
-		planet := g.generatePlanet(worldID, i+1, spectralClass, temperature)
+		orbitIndex := i + 1
+		planet := g.generatePlanet(worldID, orbitIndex, spectralClass, temperature)
 		planets = append(planets, planet)
 
 		planetRows = append(planetRows, []interface{}{
@@ -240,8 +242,16 @@ func (g *Generator) determinePlanetCount(spectralClass string) int {
 	}
 }
 
+// generatePlanet создаёт одну планету с учётом газовых гигантов и архетипов
 func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
-	// Используем архетип из archetype.go
+	// --- ЛОГИКА ГАЗОВЫХ ГИГАНТОВ (для горячих звёзд на дальних орбитах) ---
+	if (spectralClass == "O" || spectralClass == "B" || spectralClass == "A") && orbitIndex >= 3 {
+		if g.rng.Float64() < 0.8 {
+			return g.generateGasGiant(worldID, orbitIndex, spectralClass, starTemp)
+		}
+	}
+
+	// --- ЛОГИКА АРХЕТИПОВ (для всех остальных) ---
 	archetype := GenerateArchetype(spectralClass, g.rng)
 	props := g.GenerateProperties(archetype, orbitIndex, spectralClass, starTemp)
 
@@ -267,7 +277,71 @@ func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass
 		"description":       generateDescription(g.rng, props.Type, props.Habitable, props.Life),
 		"development_level": props.Development,
 	}
+	dataJSON, _ := json.Marshal(data)
 
+	return &PlanetData{
+		ID:         uuid.New().String(),
+		WorldID:    worldID,
+		Name:       name,
+		OrbitIndex: orbitIndex,
+		Data:       dataJSON,
+	}
+}
+
+// generateGasGiant создаёт газовый гигант с соответствующими параметрами
+func (g *Generator) generateGasGiant(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
+	name := names.GeneratePlanetName(g.rng, g.usedNames)
+	if name == "" {
+		name = "Газовый гигант-" + uuid.New().String()[:8]
+	}
+
+	// Размер и масса для газового гиганта (большие значения)
+	size := 8 + g.rng.Float64()*20   // 8–28
+	mass := 5 + g.rng.Float64()*15   // 5–20
+
+	// Атмосфера — водородно-гелиевая
+	atmospheres := []string{"водородно-гелиевая", "водородная", "гелиевая"}
+	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
+
+	// Температура зависит от орбиты
+	// Для газовых гигантов температура ниже, чем у архетипов
+	baseTemp := float64(starTemp) * 0.3
+	temp := baseTemp + g.rng.Float64()*100 - 50
+
+	waterPercent := 0.0
+	habitable := false
+	life := false
+
+	// У газовых гигантов может быть много спутников
+	moons := 3 + g.rng.Intn(8)
+
+	// Ресурсы — газовые гиганты богаты энергией и редкими газами
+	resources := map[string]float64{
+		"минералы": 0.0 + g.rng.Float64()*0.3,
+		"энергия":  0.7 + g.rng.Float64()*0.3,
+		"органика": 0.0 + g.rng.Float64()*0.2,
+		"редкие":   0.5 + g.rng.Float64()*0.5,
+	}
+
+	description := "Огромная планета, состоящая в основном из водорода и гелия, с мощной атмосферой и множеством спутников."
+
+	data := map[string]interface{}{
+		"type":              "газовый гигант",
+		"size":              size,
+		"mass":              mass,
+		"atmosphere":        atmosphere,
+		"temperature":       temp,
+		"water_percent":     waterPercent,
+		"habitable":         habitable,
+		"life":              life,
+		"resources":         resources,
+		"population":        0,
+		"political_system":  "нет",
+		"conflict_level":    0.0,
+		"moons":             moons,
+		"description":       description,
+		"development_level": 0.0,
+	}
 	dataJSON, _ := json.Marshal(data)
 
 	return &PlanetData{
@@ -348,6 +422,11 @@ func (g *Generator) collectEconomy(planetID string, dataJSON []byte, spectralCla
 	if err := json.Unmarshal(dataJSON, &data); err != nil {
 		return err
 	}
+	// Если планета — газовый гигант, пропускаем экономику
+	if data["type"] == "газовый гигант" {
+		return nil
+	}
+
 	habitable, _ := data["habitable"].(bool)
 	life, _ := data["life"].(bool)
 	populationRaw, _ := data["population"].(float64)
@@ -471,33 +550,6 @@ func generateDescription(rng *rand.Rand, planetType string, habitable, life bool
 	return "Безжизненный и суровый мир."
 }
 
-// GenerateProperties использует типы из properties.go и archetype.go
-func (g *Generator) GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass string, starTemp int) *Properties {
-	// Вставьте свою полную логику из старого generator.go
-	// Я даю упрощённую версию для компиляции, но вы можете заменить на свой код.
-	size := 0.5 + g.rng.Float64()*14.5
-	mass := 0.1 + g.rng.Float64()*19.9
-	temp := 200.0 + g.rng.Float64()*300.0
-	water := g.rng.Float64() * 100
-	life := false
-	if temp > 200 && temp < 350 && water > 10 {
-		life = g.rng.Float64() < 0.4
-	}
-	habitable := life && temp > 200 && temp < 350
-
-	return &Properties{
-		Type:          archetype.Surface,
-		Size:          size,
-		Mass:          mass,
-		Atmosphere:    archetype.Atmosphere,
-		Temperature:   temp,
-		WaterPercent:  water,
-		Moons:         int(size / 5),
-		Habitable:     habitable,
-		Life:          life,
-		Population:    0,
-		Political:     "нет",
-		ConflictLevel: 0,
-		Development:   0,
-	}
-}
+// ---------- Функции для работы с архетипами (уже есть в других файлах) ----------
+// Здесь предполагается, что GenerateArchetype и GenerateProperties определены в archetype.go и properties.go.
+// Они не дублируются в этом файле.
