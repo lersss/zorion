@@ -7,6 +7,7 @@ import (
 	"net/http"
 )
 
+// PlanetStats — агрегированная статистика по планетам.
 type PlanetStats struct {
 	TotalWorlds       int                       `json:"total_worlds"`
 	WorldsWithPlanets int                       `json:"worlds_with_planets"`
@@ -14,6 +15,8 @@ type PlanetStats struct {
 	PlanetsByType     map[string]int            `json:"planets_by_type"`
 	PlanetsBySpectral map[string]map[string]int `json:"planets_by_spectral"`
 	GameDesignTypes   map[string]int            `json:"game_design_types"`
+	SurfaceFormCounts map[string]int            `json:"surface_form_counts"`
+	SubterrainCounts  map[string]int            `json:"subterrain_counts"`
 	HydrosphereCount  map[string]int            `json:"hydrosphereCount"`
 	AtmosphereCount   map[string]int            `json:"atmosphereCount"`
 	BiosphereCount    map[string]int            `json:"biosphereCount"`
@@ -27,6 +30,7 @@ type PlanetStats struct {
 	Anomalies         []Anomaly                 `json:"anomalies"`
 }
 
+// Anomaly — отклонение от ожидаемого распределения.
 type Anomaly struct {
 	Type        string  `json:"type"`
 	Description string  `json:"description"`
@@ -35,6 +39,7 @@ type Anomaly struct {
 	Severity    string  `json:"severity"`
 }
 
+// GetPlanetStatsHandler — HTTP-обработчик статистики.
 func (h *AdminHandlers) GetPlanetStatsHandler(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.calculatePlanetStats()
 	if err != nil {
@@ -46,301 +51,43 @@ func (h *AdminHandlers) GetPlanetStatsHandler(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(stats)
 }
 
+// calculatePlanetStats — основной расчёт статистики.
 func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
-	stats := &PlanetStats{
-		PlanetsByType:      make(map[string]int),
-		PlanetsBySpectral:  make(map[string]map[string]int),
-		GameDesignTypes:    make(map[string]int),
-		HydrosphereCount:   make(map[string]int),
-		AtmosphereCount:    make(map[string]int),
-		BiosphereCount:     make(map[string]int),
-		Anomalies:          []Anomaly{},
-	}
+	stats := newPlanetStats()
 
-	rows, err := h.db.Query(`
-		SELECT id, coord_x, coord_y, spectral_class, temperature
-		FROM worlds
-	`)
+	worlds, err := h.loadWorlds()
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-
-	type WorldInfo struct {
-		ID            string
-		SpectralClass string
-		Temperature   int
-	}
-	worlds := []WorldInfo{}
-	for rows.Next() {
-		var w struct {
-			ID            string
-			CoordX        float64
-			CoordY        float64
-			SpectralClass string
-			Temperature   int
-		}
-		if err := rows.Scan(&w.ID, &w.CoordX, &w.CoordY, &w.SpectralClass, &w.Temperature); err != nil {
-			continue
-		}
-		worlds = append(worlds, WorldInfo{ID: w.ID, SpectralClass: w.SpectralClass, Temperature: w.Temperature})
 	}
 	stats.TotalWorlds = len(worlds)
 
-	planetRows, err := h.db.Query(`
-		SELECT world_id, data
-		FROM planets
-	`)
+	planets, err := h.loadPlanets()
 	if err != nil {
 		return nil, err
 	}
-	defer planetRows.Close()
-
-	type PlanetData struct {
-		WorldID string
-		Data    map[string]interface{}
-	}
-	planets := []PlanetData{}
-	for planetRows.Next() {
-		var worldID string
-		var dataJSON []byte
-		if err := planetRows.Scan(&worldID, &dataJSON); err != nil {
-			continue
-		}
-		var data map[string]interface{}
-		if err := json.Unmarshal(dataJSON, &data); err != nil {
-			continue
-		}
-		planets = append(planets, PlanetData{WorldID: worldID, Data: data})
-	}
 	stats.TotalPlanets = len(planets)
 
-	var totalSize, totalMass, totalTemp, totalWater float64
-	var totalPopulation int64
-	var sizeCount, massCount, tempCount, waterCount, popCount int
+	aggregator := newStatsAggregator(worlds)
+	aggregator.process(planets, stats)
+	aggregator.applyAverages(stats)
 
-	worldsWithPlanets := make(map[string]bool)
-	for _, p := range planets {
-		worldsWithPlanets[p.WorldID] = true
-
-		pType := getString(p.Data, "type")
-		if pType != "" {
-			stats.PlanetsByType[pType]++
-			spectral := ""
-			for _, w := range worlds {
-				if w.ID == p.WorldID {
-					spectral = w.SpectralClass
-					break
-				}
-			}
-			if spectral != "" {
-				if _, ok := stats.PlanetsBySpectral[spectral]; !ok {
-					stats.PlanetsBySpectral[spectral] = make(map[string]int)
-				}
-				stats.PlanetsBySpectral[spectral][pType]++
-			}
-		}
-
-		hydro := getString(p.Data, "hydrosphere")
-		if hydro != "" {
-			stats.HydrosphereCount[hydro]++
-		}
-		atmo := getString(p.Data, "atmosphere")
-		if atmo != "" {
-			stats.AtmosphereCount[atmo]++
-		}
-		bio := getString(p.Data, "biosphere")
-		if bio != "" {
-			stats.BiosphereCount[bio]++
-		}
-
-		surface := pType
-		temperature := getFloat(p.Data, "temperature")
-		waterPercent := getFloat(p.Data, "water_percent")
-		habitable := getBool(p.Data, "habitable")
-		life := getBool(p.Data, "life")
-
-		gdType := classifyGameDesignType(surface, hydro, atmo, temperature, waterPercent, habitable, life, p.Data)
-		stats.GameDesignTypes[gdType]++
-
-		if life {
-			stats.LifeCount++
-		}
-		if habitable {
-			stats.HabitableCount++
-		}
-
-		if size, ok := p.Data["size"].(float64); ok {
-			totalSize += size
-			sizeCount++
-		}
-		if mass, ok := p.Data["mass"].(float64); ok {
-			totalMass += mass
-			massCount++
-		}
-		if temp, ok := p.Data["temperature"].(float64); ok {
-			totalTemp += temp
-			tempCount++
-		}
-		if water, ok := p.Data["water_percent"].(float64); ok {
-			totalWater += water
-			waterCount++
-		}
-		if pop, ok := p.Data["population"].(float64); ok {
-			totalPopulation += int64(pop)
-			popCount++
-		}
-	}
-	stats.WorldsWithPlanets = len(worldsWithPlanets)
-
-	if sizeCount > 0 {
-		stats.AvgSize = totalSize / float64(sizeCount)
-	}
-	if massCount > 0 {
-		stats.AvgMass = totalMass / float64(massCount)
-	}
-	if tempCount > 0 {
-		stats.AvgTemp = totalTemp / float64(tempCount)
-	}
-	if waterCount > 0 {
-		stats.AvgWater = totalWater / float64(waterCount)
-	}
-	if popCount > 0 {
-		stats.AvgPopulation = totalPopulation / int64(popCount)
-	}
-
-	noPlanets := stats.TotalWorlds - stats.WorldsWithPlanets
-	if stats.TotalWorlds > 0 && float64(noPlanets)/float64(stats.TotalWorlds) > 0.5 {
-		stats.Anomalies = append(stats.Anomalies, Anomaly{
-			Type:        "world",
-			Description: "Слишком много миров без планет",
-			Value:       float64(noPlanets),
-			Expected:    float64(stats.TotalWorlds) * 0.3,
-			Severity:    "high",
-		})
-	}
-
-	// expectedTypes намеренно НЕ содержит "не определена" —
-	// чтобы не генерировать аномалию до того, как мы решим, что с ней делать.
-	expectedTypes := map[string]float64{
-		"землеподобная":  0.2,
-		"пустынная":      0.15,
-		"ледяная":        0.15,
-		"газовый гигант": 0.15,
-		"океаническая":   0.1,
-		"вулканическая":  0.1,
-		"скалистая":      0.1,
-		"радиоактивная":  0.02,
-	}
-	if stats.TotalPlanets > 0 {
-		for gdType, count := range stats.GameDesignTypes {
-			expected := float64(stats.TotalPlanets) * expectedTypes[gdType]
-			if expected > 0 {
-				ratio := float64(count) / expected
-				if ratio > 1.5 {
-					stats.Anomalies = append(stats.Anomalies, Anomaly{
-						Type:        "game_design_type",
-						Description: "Слишком много планет типа " + gdType,
-						Value:       float64(count),
-						Expected:    expected,
-						Severity:    "medium",
-					})
-				} else if ratio < 0.5 {
-					stats.Anomalies = append(stats.Anomalies, Anomaly{
-						Type:        "game_design_type",
-						Description: "Слишком мало планет типа " + gdType,
-						Value:       float64(count),
-						Expected:    expected,
-						Severity:    "medium",
-					})
-				}
-			}
-		}
-	}
+	detectWorldAnomalies(stats)
+	detectTypeAnomalies(stats)
 
 	return stats, nil
 }
 
-func getString(data map[string]interface{}, key string) string {
-	if val, ok := data[key].(string); ok {
-		return val
+// newPlanetStats — инициализация со всеми map-полями.
+func newPlanetStats() *PlanetStats {
+	return &PlanetStats{
+		PlanetsByType:     make(map[string]int),
+		PlanetsBySpectral: make(map[string]map[string]int),
+		GameDesignTypes:   make(map[string]int),
+		SurfaceFormCounts: make(map[string]int),
+		SubterrainCounts:  make(map[string]int),
+		HydrosphereCount:  make(map[string]int),
+		AtmosphereCount:   make(map[string]int),
+		BiosphereCount:    make(map[string]int),
+		Anomalies:         []Anomaly{},
 	}
-	return ""
-}
-
-func getFloat(data map[string]interface{}, key string) float64 {
-	if val, ok := data[key].(float64); ok {
-		return val
-	}
-	return 0
-}
-
-func getBool(data map[string]interface{}, key string) bool {
-	if val, ok := data[key].(bool); ok {
-		return val
-	}
-	return false
-}
-
-func classifyGameDesignType(surface, hydrosphere, atmosphere string, temperature, waterPercent float64, habitable, life bool, data map[string]interface{}) string {
-	// Радиоактивная
-	if radioactive, ok := data["radioactive"].(bool); ok && radioactive {
-		return "радиоактивная"
-	}
-	if (surface == "металлическая" || surface == "реголитовая") && (atmosphere == "плотная" || atmosphere == "ядовитая") {
-		if res, ok := data["resources"].(map[string]interface{}); ok {
-			if rare, ok := res["редкие"].(float64); ok && rare > 0.8 {
-				return "радиоактивная"
-			}
-		}
-	}
-
-	// Газовый гигант
-	if surface == "газовый гигант" {
-		return "газовый гигант"
-	}
-
-	// Вулканическая
-	if surface == "вулканическая" || surface == "лавовая" {
-		return "вулканическая"
-	}
-
-	// Ледяная
-	if surface == "ледяная" || temperature < 200 {
-		return "ледяная"
-	}
-
-	// Пустынная
-	if surface == "пустынная" || (surface == "песчаная" && waterPercent < 20) {
-		return "пустынная"
-	}
-
-	// Океаническая
-	if (surface == "песчаная" || surface == "глинистая") && hydrosphere == "океаны" {
-		return "океаническая"
-	}
-
-	// Землеподобная
-	if surface == "скалистая" && hydrosphere == "океаны" && habitable {
-		return "землеподобная"
-	}
-
-	// Реголитовая
-	if surface == "реголитовая" {
-		return "реголитовая"
-	}
-
-	// Органик
-	if surface == "органик" {
-		return "органик"
-	}
-
-	// Металлическая
-	if surface == "металлическая" {
-		return "металлическая"
-	}
-
-	// Всё, что не подошло, попадает сюда. Позже мы разберём эту категорию
-	// и придумаем для неё корректные типы.
-	return "не определена"
 }
