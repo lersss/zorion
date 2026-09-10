@@ -45,44 +45,109 @@ func (g *Generator) GenerateGalaxy() []*models.World {
 	return g.generateWorldsRandom(g.cfg.MinDist)
 }
 
-// ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ СВОЙСТВ МИРА ----------
+// ==================== СПЕКТРАЛЬНЫЕ КЛАССЫ ====================
+
+// SpectralWeight — вес спектрального класса для генерации.
+//
+// Распределение близко к реальному (Mleчный Путь), но с чуть большим
+// количеством «интересных» звёзд для геймплея:
+//
+//	O: 0.5%   (реально 0.00003%)
+//	B: 2%     (реально 0.1%)
+//	A: 4%     (реально 0.6%)
+//	F: 7%     (реально 3%)
+//	G: 12%    (реально 7%)
+//	K: 17%    (реально 12%)
+//	M: 32%    (реально 76%)
+//	L: 8%     (не звёзды, но в игре есть)
+//	T: 8%
+//	Y: 9.5%
+type spectralWeight struct {
+	Class    string
+	Weight   float64
+	TempMin  int
+	TempMax  int
+}
+
+var spectralWeights = []spectralWeight{
+	{"O", 0.5, 30000, 50000},
+	{"B", 2.0, 10000, 30000},
+	{"A", 4.0, 7500, 10000},
+	{"F", 7.0, 6000, 7500},
+	{"G", 12.0, 5200, 6000},
+	{"K", 17.0, 3700, 5200},
+	{"M", 32.0, 2400, 3700},
+	{"L", 8.0, 1300, 2400},
+	{"T", 8.0, 700, 1300},
+	{"Y", 9.5, 300, 700},
+}
+
+// totalSpectralWeight — сумма всех весов (100.0).
+var totalSpectralWeight = func() float64 {
+	sum := 0.0
+	for _, sw := range spectralWeights {
+		sum += sw.Weight
+	}
+	return sum
+}()
+
+// randomSpectralClass — взвешенный выбор спектрального класса.
 func randomSpectralClass(rng *rand.Rand) string {
-	classes := []string{"O", "B", "A", "F", "G", "K", "M", "L", "T", "Y"}
-	return classes[rng.Intn(len(classes))]
+	r := rng.Float64() * totalSpectralWeight
+	for _, sw := range spectralWeights {
+		r -= sw.Weight
+		if r <= 0 {
+			return sw.Class
+		}
+	}
+	return "M" // fallback
 }
 
-func randomTemperature(rng *rand.Rand) int {
-	return rng.Intn(40000-200) + 200
+// randomTemperature — температура звезды, согласованная со спектром.
+//
+// Каждый класс имеет свой диапазон. Это гарантирует, что G-звезда
+// не получит 38000 K, а O-звезда — 300 K.
+func randomTemperature(spectralClass string, rng *rand.Rand) int {
+	for _, sw := range spectralWeights {
+		if sw.Class == spectralClass {
+			span := sw.TempMax - sw.TempMin
+			return sw.TempMin + rng.Intn(span)
+		}
+	}
+	// fallback — G-звезда
+	return 5200 + rng.Intn(800)
 }
 
-// generateWorld создаёт один мир по заданным координатам (без масштабирования)
+// ==================== ГЕНЕРАЦИЯ МИРА ====================
+
+// generateWorld создаёт один мир по заданным координатам.
 func (g *Generator) generateWorld(center struct{ X, Y float64 }) *models.World {
 	spread := g.cfg.WorldSpread
 	x := center.X + g.rng.NormFloat64()*spread
 	y := center.Y + g.rng.NormFloat64()*spread
 
-	// На всякий случай проверяем, что точка не вышла за круг (но такого быть не должно)
-	// Если вышла – просто логируем и не масштабируем (точка будет обрезана на клиенте или отброшена)
 	radius := g.cfg.MapSize
 	if math.Hypot(x, y) > radius {
-		// Логируем предупреждение, но не масштабируем
-		// (можно было бы отбросить, но для MVP оставим как есть)
-		// В будущем можно добавить отбрасывание таких точек.
+		// Точка вышла за круг — оставляем как есть (MVP),
+		// в будущем можно отбрасывать.
 	}
 
-	// Карта для уникальных имён (локальная)
 	usedNames := make(map[string]bool)
+
+	// Сначала спектр, потом температура — они связаны
+	spectralClass := randomSpectralClass(g.rng)
+	temperature := randomTemperature(spectralClass, g.rng)
 
 	now := time.Now()
 	world := &models.World{
-		ID:             uuid.New().String(),
-		Name:           names.GeneratePlanetName(g.rng, usedNames),
-		CoordX:         x,
-		CoordY:         y,
-		SpectralClass:  randomSpectralClass(g.rng),
-		Temperature:    randomTemperature(g.rng),
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:            uuid.New().String(),
+		Name:          names.GeneratePlanetName(g.rng, usedNames),
+		CoordX:        x,
+		CoordY:        y,
+		SpectralClass: spectralClass,
+		Temperature:   temperature,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	return world
 }
