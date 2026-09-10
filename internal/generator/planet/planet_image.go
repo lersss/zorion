@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -25,17 +26,17 @@ type ClimateWeight struct {
 }
 
 type Climate struct {
-	ID                 string        `json:"id"`
-	Name               string        `json:"name"`
-	Weight             ClimateWeight `json:"weight"`
-	AllowedSurfaces    []string      `json:"allowed_surfaces"`
-	AllowedHydrospheres []string    `json:"allowed_hydrospheres"`
-	AllowedAtmospheres  []string    `json:"allowed_atmospheres"`
-	AllowedBiospheres   []string    `json:"allowed_biospheres"`
-	TemperatureMin      int          `json:"temperature_min"`
-	TemperatureMax      int          `json:"temperature_max"`
-	WaterChance         float64      `json:"water_chance"`
-	LifeChance          float64      `json:"life_chance"`
+	ID                  string        `json:"id"`
+	Name                string        `json:"name"`
+	Weight              ClimateWeight `json:"weight"`
+	AllowedSurfaces     []string      `json:"allowed_surfaces"`
+	AllowedHydrospheres []string      `json:"allowed_hydrospheres"`
+	AllowedAtmospheres  []string      `json:"allowed_atmospheres"`
+	AllowedBiospheres   []string      `json:"allowed_biospheres"`
+	TemperatureMin      int           `json:"temperature_min"`
+	TemperatureMax      int           `json:"temperature_max"`
+	WaterChance         float64       `json:"water_chance"`
+	LifeChance          float64       `json:"life_chance"`
 }
 
 type ClimateData struct {
@@ -44,14 +45,21 @@ type ClimateData struct {
 
 // ---------- Генератор изображений ----------
 
+// PlanetGenerator — потокобезопасный генератор.
+//
+// Все обращения к cache, cacheOrder и rand защищены мьютексом mu.
+// climates/canvasSize/enableCache/maxCacheSize — только читаются после
+// создания, поэтому не требуют защиты.
 type PlanetGenerator struct {
-	climates      []Climate
-	canvasSize    int
-	enableCache   bool
-	cache         map[string]*CachedPlanet
-	cacheOrder    []string
-	maxCacheSize  int
-	rand          *rand.Rand
+	mu sync.Mutex
+
+	climates     []Climate
+	canvasSize   int
+	enableCache  bool
+	cache        map[string]*CachedPlanet
+	cacheOrder   []string
+	maxCacheSize int
+	rand         *rand.Rand
 }
 
 type CachedPlanet struct {
@@ -117,6 +125,7 @@ func WithMaxCacheSize(size int) func(*PlanetGenerator) {
 }
 
 // ---------- Опции для генерации ----------
+
 type GenerateOptions struct {
 	Radius      int
 	StarType    string
@@ -174,11 +183,15 @@ func (pg *PlanetGenerator) GeneratePlanet(radius int, opts ...func(*GenerateOpti
 	for _, opt := range opts {
 		opt(options)
 	}
+
 	seed := options.Seed
 	if seed == 0 {
-		seed = pg.rand.Int63()
+		seed = pg.nextInt63()
 	}
 	rng := rand.New(rand.NewSource(seed))
+
+	// Дальше работаем ТОЛЬКО с локальным rng и локальными переменными.
+	// Общий стейт (pg.cache, pg.cacheOrder) трогаем только под мьютексом.
 
 	var climate *Climate
 	if options.ClimateID != "" {
@@ -257,17 +270,44 @@ func (pg *PlanetGenerator) GeneratePlanet(radius int, opts ...func(*GenerateOpti
 		Temperature:   temperature,
 	}
 	planet := &CachedPlanet{Image: finalImg, Meta: meta}
+
 	if pg.enableCache {
 		key := hashParams(meta, options)
-		if len(pg.cache) >= pg.maxCacheSize && pg.maxCacheSize > 0 {
-			oldest := pg.cacheOrder[0]
-			delete(pg.cache, oldest)
-			pg.cacheOrder = pg.cacheOrder[1:]
-		}
-		pg.cache[key] = planet
-		pg.cacheOrder = append(pg.cacheOrder, key)
+		pg.cachePut(key, planet)
 	}
 	return planet, nil
+}
+
+// nextInt63 — безопасный доступ к общему рандому.
+func (pg *PlanetGenerator) nextInt63() int64 {
+	pg.mu.Lock()
+	defer pg.mu.Unlock()
+	return pg.rand.Int63()
+}
+
+// cachePut — безопасная запись в кэш с вытеснением по FIFO.
+func (pg *PlanetGenerator) cachePut(key string, planet *CachedPlanet) {
+	pg.mu.Lock()
+	defer pg.mu.Unlock()
+
+	if pg.maxCacheSize > 0 && len(pg.cache) >= pg.maxCacheSize && len(pg.cacheOrder) > 0 {
+		oldest := pg.cacheOrder[0]
+		delete(pg.cache, oldest)
+		pg.cacheOrder = pg.cacheOrder[1:]
+	}
+
+	pg.cache[key] = planet
+	pg.cacheOrder = append(pg.cacheOrder, key)
+}
+
+// cacheGet — безопасное чтение из кэша.
+// Пока не используется в GeneratePlanet (там всегда генерируем заново),
+// но оставлено на будущее, когда добавим hit-проверку.
+func (pg *PlanetGenerator) cacheGet(key string) (*CachedPlanet, bool) {
+	pg.mu.Lock()
+	defer pg.mu.Unlock()
+	p, ok := pg.cache[key]
+	return p, ok
 }
 
 func (pg *PlanetGenerator) selectClimateByStarType(starType string, rng *rand.Rand) *Climate {
