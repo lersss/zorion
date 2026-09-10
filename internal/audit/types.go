@@ -4,35 +4,46 @@ package audit
 // ==================== УРОВНИ КРИТИЧНОСТИ ====================
 
 const (
-	SeverityLow    = "low"    // мелкие несоответствия, не влияют на геймплей
-	SeverityMedium = "medium" // заметные противоречия, странно выглядят
-	SeverityHigh   = "high"   // физически невозможно или сломает геймплей
+	SeverityLow    = "low"
+	SeverityMedium = "medium"
+	SeverityHigh   = "high"
 )
 
 // ==================== ПРОБЛЕМА ====================
 
-// Issue — одна найденная проблема в планете.
+// Issue — одна найденная проблема.
+// Универсальна: используется и для планет, и для звёзд, и для фракций.
 type Issue struct {
-	PlanetID    string                 `json:"planet_id"`
-	PlanetName  string                 `json:"planet_name"`
-	WorldID     string                 `json:"world_id"`
+	// Идентификация сущности, у которой найдена проблема.
+	EntityID   string `json:"entity_id"`   // ID планеты / звезды / фракции
+	EntityType string `json:"entity_type"` // "planet" / "star" / "faction"
+	EntityName string `json:"entity_name"` // читаемое имя
+
+	// Контекст (для планет — world_id, для фракций — homeworld и т.п.)
+	ContextID string `json:"context_id,omitempty"`
+
+	// Проблема
 	Code        string                 `json:"code"`        // "jungles_in_cold"
-	Severity    string                 `json:"severity"`    // "high" / "medium" / "low"
+	Severity    string                 `json:"severity"`    // "low" / "medium" / "high"
 	Description string                 `json:"description"` // человекочитаемое
 	Details     map[string]interface{} `json:"details,omitempty"`
 }
 
 // ==================== РЕЗУЛЬТАТ ====================
 
-// AuditResult — результат полного аудита галактики.
+// AuditResult — результат полного аудита.
+// Один и тот же тип для всех сущностей: планет, звёзд, фракций.
 type AuditResult struct {
+	// Что проверялось
+	EntityType string `json:"entity_type"` // "planet" / "star" / ...
+
 	// Итоги
-	TotalPlanets      int   `json:"total_planets"`
-	PlanetsWithIssues int   `json:"planets_with_issues"`
+	TotalEntities     int   `json:"total_entities"`
+	EntitiesWithIssue int   `json:"entities_with_issues"`
 	TotalIssues       int   `json:"total_issues"`
 	DurationMs        int64 `json:"duration_ms"`
 
-	// Агрегаты по коду проблемы (для быстрого обзора)
+	// Агрегаты по коду проблемы
 	IssuesByCode map[string]int `json:"issues_by_code"`
 
 	// Агрегаты по уровню критичности
@@ -41,87 +52,34 @@ type AuditResult struct {
 	// Примеры проблем (до SampleLimit)
 	SampleIssues []Issue `json:"sample_issues"`
 
-	// Был ли результат усечён (если проблем > SampleLimit)
+	// Был ли результат усечён
 	Truncated bool `json:"truncated"`
 }
 
 // SampleLimit — максимальное количество примеров в ответе.
 const SampleLimit = 200
 
-// ==================== ПРАВИЛА ====================
+// ==================== ПРАВИЛО ====================
 
 // Rule — одно правило проверки.
+// Дженерик по типу сущности: для планет это Rule[planet.View],
+// для звёзд Rule[star.View] и т.д.
 //
-// Принимает "сырую" планету (map из JSON) и её ID/имя/world_id.
-// Возвращает список найденных проблем (может быть пустым).
-type Rule struct {
-	Code     string
-	Severity string
-	Check    func(p *PlanetView) []Issue
+// Правило принимает "представление" сущности и возвращает список проблем.
+// Каждое правило само формирует Issue с нужными Code/Severity.
+type Rule[T any] struct {
+	Check func(item *T) []Issue
 }
 
-// PlanetView — представление планеты для проверок.
-// Заполняется один раз в начале аудита, чтобы не парсить JSON в каждой проверке.
-type PlanetView struct {
-	ID         string
-	Name       string
-	WorldID    string
+// ==================== КОНТЕКСТ ====================
 
-	// Физика
-	Size         float64
-	Mass         float64
-	Density      float64
-	Temperature  float64
-	WaterPercent float64
-
-	// Типы и флаги
-	Type            string
-	SurfaceDominant string
-	Climate         string
-	Atmosphere      string
-	Hydrosphere     string
-	Biosphere       string
-
-	IsGasGiant  bool
-	IsRadioactive bool
-	Habitable   bool
-	Life        bool
-	Population  int64
-
-	// Композиции
-	Surface    map[string]float64
-	Subterrain map[string]float64
-
-	// Ядро (nil если нет)
-	Core *CoreView
-
-	// Спутники
-	Satellites []SatelliteView
-
-	// Сырой JSON (на случай, если правило хочет свои поля)
-	Raw map[string]interface{}
-}
-
-// CoreView — ядро планеты для проверок.
-type CoreView struct {
-	Type          string
-	MassPercent   float64
-	Activity      float64
-	Radioactivity float64
-	Age           float64
-	IsActive      bool
-	IsMetallic    bool
-}
-
-// SatelliteView — спутник газового гиганта для проверок.
-type SatelliteView struct {
-	ID           string
-	Name         string
-	Mass         float64
-	Size         float64
-	Temperature  float64
-	WaterPercent float64
-	Atmosphere   string
-	Habitable    bool
-	Life         bool
+// ContextKey — общий интерфейс для "вида" сущности.
+// Позволяет движку достать ID/Name/ContextID из любого типа.
+//
+// Каждая сущность (View) реализует этот интерфейс.
+type ContextKey interface {
+	GetID() string
+	GetName() string
+	GetContextID() string
+	GetEntityType() string
 }
