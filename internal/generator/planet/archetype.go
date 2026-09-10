@@ -10,7 +10,9 @@ import (
 )
 
 // Archetype — результат выбора архетипа для конкретной планеты.
-// Вместо одиночной Surface теперь хранит базовые веса композиции.
+//
+// Масса первична. Размер вычисляется из массы и плотности
+// (см. Properties, densityForPlanet).
 type Archetype struct {
 	ID             string
 	Name           string
@@ -24,13 +26,11 @@ type Archetype struct {
 	TemperatureMax float64
 	WaterChance    float64
 	LifeChance     float64
-	SizeMin        float64
-	SizeMax        float64
 	MassMin        float64
 	MassMax        float64
 }
 
-// ClimateConfig — конфиг климата из JSON
+// ClimateConfig — конфиг климата из JSON.
 type ClimateConfig struct {
 	ID                  string             `json:"id"`
 	Name                string             `json:"name"`
@@ -44,6 +44,8 @@ type ClimateConfig struct {
 	TemperatureMax      float64            `json:"temperature_max"`
 	WaterChance         float64            `json:"water_chance"`
 	LifeChance          float64            `json:"life_chance"`
+	MassMin             float64            `json:"mass_min"`
+	MassMax             float64            `json:"mass_max"`
 }
 
 type ArchetypeConfig struct {
@@ -52,7 +54,7 @@ type ArchetypeConfig struct {
 
 var archetypeCache *ArchetypeConfig
 
-// LoadArchetypes — загружает архетипы из JSON
+// LoadArchetypes — загружает архетипы из JSON.
 func LoadArchetypes(path string) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -118,6 +120,15 @@ func GenerateArchetype(spectralClass string, rng *rand.Rand) *Archetype {
 	baseSurface := copyWeights(selectedClimate.BaseSurface)
 	baseSubterrain := copyWeights(selectedClimate.BaseSubterrain)
 
+	massMin := selectedClimate.MassMin
+	massMax := selectedClimate.MassMax
+	if massMin <= 0 {
+		massMin = 0.1
+	}
+	if massMax <= massMin {
+		massMax = massMin + 1.0
+	}
+
 	return &Archetype{
 		ID:             selectedClimate.ID,
 		Name:           selectedClimate.Name,
@@ -131,25 +142,24 @@ func GenerateArchetype(spectralClass string, rng *rand.Rand) *Archetype {
 		TemperatureMax: selectedClimate.TemperatureMax,
 		WaterChance:    selectedClimate.WaterChance,
 		LifeChance:     selectedClimate.LifeChance,
-		SizeMin:        0.5,
-		SizeMax:        14.5,
-		MassMin:        0.1,
-		MassMax:        19.9,
+		MassMin:        massMin,
+		MassMax:        massMax,
 	}
 }
 
-// fallbackArchetype — используется, если JSON не загрузился
+// fallbackArchetype — используется, если JSON не загрузился.
 func fallbackArchetype() *Archetype {
 	return &Archetype{
 		ID:      "fallback",
 		Name:    "Землеподобная (fallback)",
 		Climate: "temperate",
 		BaseSurface: map[string]float64{
-			SurfaceRocks:   0.4,
-			SurfaceSands:   0.2,
+			SurfaceRocks:   0.3,
+			SurfaceSands:   0.15,
 			SurfaceOceans:  0.2,
 			SurfaceLakes:   0.1,
-			SurfaceForests: 0.1,
+			SurfaceForests: 0.15,
+			SurfaceCraters: 0.1,
 		},
 		BaseSubterrain: map[string]float64{
 			SubterrainEmptyRock:        0.3,
@@ -166,15 +176,12 @@ func fallbackArchetype() *Archetype {
 		TemperatureMax: 350,
 		WaterChance:    0.7,
 		LifeChance:     0.4,
-		SizeMin:        0.5,
-		SizeMax:        14.5,
-		MassMin:        0.1,
-		MassMax:        19.9,
+		MassMin:        0.3,
+		MassMax:        2.0,
 	}
 }
 
 // pickOrFallback — случайный элемент из списка, либо fallback если пусто.
-// Названа так, чтобы не конфликтовать с pickRandom в planet_image.go.
 func pickOrFallback(items []string, rng *rand.Rand, fallback string) string {
 	if len(items) == 0 {
 		return fallback

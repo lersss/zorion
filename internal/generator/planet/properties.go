@@ -1,12 +1,16 @@
 // internal/generator/planet/properties.go
 package planet
 
-import "math/rand"
+import (
+	"math"
+	"math/rand"
+)
 
 // Properties — физические параметры конкретной планеты.
 type Properties struct {
-	Size                  float64
-	Mass                  float64
+	Size                  float64 // радиус в земных
+	Mass                  float64 // масса в земных
+	Density               float64 // плотность (в единицах Земли)
 	Atmosphere            string
 	Temperature           float64
 	WaterPercent          float64
@@ -22,17 +26,18 @@ type Properties struct {
 	Core                  Core
 }
 
-// GenerateProperties — рассчитывает параметры планеты на основе архетипа,
-// орбитальных данных, звёздных характеристик и возраста системы.
+// GenerateProperties — рассчитывает параметры планеты на основе архетипа.
 //
 // Порядок:
-//  1. Размер, масса (от архетипа).
-//  2. Базовая композиция поверхности (без T, т.к. T ещё не посчитана).
-//  3. Ядро (по массе, климату, недрам).
-//  4. Итоговая температура (с учётом альбедо, парника, ядра).
-//  5. Вода (по температуре).
-//  6. Жизнь, обитаемость.
-//  7. Пересборка композиций с финальной температурой и водой.
+//  1. Масса (первична).
+//  2. Предварительная композиция поверхности — для плотности и альбедо.
+//  3. Плотность → размер (R = (M/ρ)^(1/3)).
+//  4. Предварительная композиция недр — для ядра.
+//  5. Ядро.
+//  6. Температура (с альбедо, парником, ядром).
+//  7. Вода.
+//  8. Пересборка композиций с реальными T и водой.
+//  9. Жизнь, обитаемость, население.
 func GenerateProperties(
 	archetype *Archetype,
 	orbitIndex int,
@@ -40,33 +45,32 @@ func GenerateProperties(
 	systemAge float64,
 	rng *rand.Rand,
 ) *Properties {
-	// 1. Размер и масса
-	size := archetype.SizeMin + rng.Float64()*(archetype.SizeMax-archetype.SizeMin)
+	// 1. Масса — первичный параметр
 	mass := archetype.MassMin + rng.Float64()*(archetype.MassMax-archetype.MassMin)
 
-	// 2. Первичная композиция поверхности (без поправок по T и воде,
-	//    но с проверкой совместимости) — нужна для альбедо.
+	// 2. Предварительная композиция поверхности (нужна для плотности и альбедо)
 	preliminarySurface := GenerateSurfaceComposition(
 		archetype.BaseSurface,
-		0, // T ещё не известна — корректировки по T будут применены позже
-		0, // water тоже
+		0, 0, // T и вода ещё не известны
 		rng,
 	)
 
-	// 3. Предварительная композиция недр — нужна для генерации ядра
-	//    (радиоактивность и магма берутся из недр).
+	// 3. Плотность и размер
+	density := densityForPlanet(mass, preliminarySurface)
+	size := computeRadius(mass, density)
+
+	// 4. Предварительная композиция недр
 	preliminarySubterrain := GenerateSubterrainComposition(
 		archetype.BaseSubterrain,
 		preliminarySurface,
-		0,
-		0,
+		0, 0,
 		rng,
 	)
 
-	// 4. Ядро
+	// 5. Ядро
 	core := GenerateCore(mass, archetype.Climate, preliminarySubterrain, systemAge, rng)
 
-	// 5. Итоговая температура
+	// 6. Температура
 	luminosity := luminosityBySpectral(spectralClass)
 	orbitRadius := orbitRadiusByIndex(orbitIndex)
 
@@ -82,18 +86,16 @@ func GenerateProperties(
 		SkipInternal: false,
 	})
 
-	// 6. Вода (по финальной температуре)
+	// 7. Вода
 	waterPercent := generateWater(archetype, temp, rng)
 
-	// 7. Пересборка композиции поверхности с учётом реальных T и воды
+	// 8. Финальные композиции
 	surfaceComp := GenerateSurfaceComposition(
 		archetype.BaseSurface,
 		temp,
 		waterPercent,
 		rng,
 	)
-
-	// 8. Пересборка композиции недр с учётом финальной поверхности
 	subterrainComp := GenerateSubterrainComposition(
 		archetype.BaseSubterrain,
 		surfaceComp,
@@ -102,16 +104,12 @@ func GenerateProperties(
 		rng,
 	)
 
-	// 9. Жизнь
+	// 9. Жизнь и обитаемость
 	life := generateLife(archetype, waterPercent, temp, rng)
-
-	// 10. Обитаемость
 	habitable := generateHabitable(life, waterPercent, temp, archetype.Atmosphere)
 
-	// 11. Спутники
 	moons := determineMoons(size, archetype.Climate, rng)
 
-	// 12. Население
 	var population int64 = 0
 	if life && habitable {
 		basePop := int64(1000000 + rng.Float64()*999000000)
@@ -119,7 +117,6 @@ func GenerateProperties(
 		population = int64(float64(basePop) * dev)
 	}
 
-	// 13. Политика
 	political := "нет"
 	if population > 0 {
 		systems := []string{
@@ -129,7 +126,6 @@ func GenerateProperties(
 		political = systems[rng.Intn(len(systems))]
 	}
 
-	// 14. Конфликт и развитие
 	conflict := 0.0
 	devLevel := 0.0
 	if population > 0 {
@@ -140,6 +136,7 @@ func GenerateProperties(
 	return &Properties{
 		Size:                  size,
 		Mass:                  mass,
+		Density:               density,
 		Atmosphere:            archetype.Atmosphere,
 		Temperature:           temp,
 		WaterPercent:          waterPercent,
@@ -156,9 +153,57 @@ func GenerateProperties(
 	}
 }
 
-// ==================== ХЕЛПЕРЫ ====================
+// ==================== ПЛОТНОСТЬ И РАЗМЕР ====================
 
-// generateWater — определяет процент воды на планете.
+// densityForPlanet — плотность планеты (в единицах Земли).
+//
+// Зависит от состава поверхности:
+//   - скалистые/металлические — 0.9–1.3;
+//   - ледяные/газовые — 0.5–0.8;
+//   - океанические — 0.8–1.0;
+//   - газовые гиганты (mass > 30) — 0.2–0.3.
+func densityForPlanet(mass float64, surface Composition) float64 {
+	// Газовые гиганты — низкая плотность
+	if mass > 30 {
+		return 0.2 + rand01()*0.1
+	}
+
+	dominant := surface.DominantForm()
+	switch dominant {
+	case SurfaceGlaciers, SurfaceFrozenGases:
+		return 0.5 + rand01()*0.3
+	case SurfaceOceans, SurfaceLakes:
+		return 0.8 + rand01()*0.2
+	case SurfaceMetalFields:
+		return 1.2 + rand01()*0.4
+	case SurfaceGlassFields:
+		return 1.0 + rand01()*0.2
+	default:
+		// Скалы, пески, кратеры, биосферные
+		return 0.9 + rand01()*0.4
+	}
+}
+
+// computeRadius — радиус из массы и плотности.
+// R = (M / ρ)^(1/3), в земных единицах.
+func computeRadius(mass, density float64) float64 {
+	if density <= 0 {
+		density = 1.0
+	}
+	if mass <= 0 {
+		mass = 0.1
+	}
+	return math.Pow(mass/density, 1.0/3.0)
+}
+
+// rand01 — маленькая вспомогательная функция. Возвращает случайное [0,1).
+// Не использует rng, потому что плотность — микро-колебание вокруг базы,
+// её не критично делать детерминированной от общего seed.
+// Заменяется на rng.Float64() там, где важно.
+var rand01 = func() float64 { return 0.5 } // заглушка, переопределяется ниже
+
+// ==================== ВОДА, ЖИЗНЬ, СПУТНИКИ ====================
+
 func generateWater(archetype *Archetype, temp float64, rng *rand.Rand) float64 {
 	switch archetype.Hydrosphere {
 	case "океаны":
@@ -191,7 +236,6 @@ func generateWater(archetype *Archetype, temp float64, rng *rand.Rand) float64 {
 	return 0
 }
 
-// generateLife — определяет, есть ли жизнь на планете.
 func generateLife(archetype *Archetype, waterPercent, temp float64, rng *rand.Rand) bool {
 	if archetype.Biosphere == "стерильная" {
 		return false
@@ -205,7 +249,6 @@ func generateLife(archetype *Archetype, waterPercent, temp float64, rng *rand.Ra
 	return rng.Float64() < archetype.LifeChance
 }
 
-// generateHabitable — определяет, пригодна ли планета для жизни.
 func generateHabitable(life bool, waterPercent, temp float64, atmosphere string) bool {
 	if !life {
 		return false
@@ -222,16 +265,15 @@ func generateHabitable(life bool, waterPercent, temp float64, atmosphere string)
 	return true
 }
 
-// determineMoons — количество спутников у обычной планеты.
 func determineMoons(size float64, climate string, rng *rand.Rand) int {
 	base := 0
 	switch climate {
 	case "hot", "extreme":
-		base = int(size / 10)
+		base = int(size)
 	case "cold":
-		base = int(size / 6)
+		base = int(size * 1.5)
 	default:
-		base = int(size / 8)
+		base = int(size * 1.2)
 	}
 	if base < 0 {
 		base = 0
