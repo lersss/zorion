@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"zorion/internal/generator/resource"
-	"zorion/internal/names"
 	"zorion/internal/repository"
 )
 
@@ -59,16 +58,13 @@ func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, tempe
 	}
 	defer tx.Rollback()
 
-	// Буферы для батч-вставки
 	batch := newBatchBuffers(planetCount)
 
-	// Генерируем каждую планету
 	for i := 0; i < planetCount; i++ {
 		orbitIndex := i + 1
 		planet := g.generatePlanet(worldID, orbitIndex, spectralClass, temperature)
 		batch.addPlanet(planet)
 
-		// Экономика (поселения, заводы, товары)
 		if err := g.collectEconomy(
 			planet.ID, planet.Data, spectralClass,
 			&batch.settlementRows, &batch.factoryRows, &batch.goodsRows,
@@ -76,11 +72,9 @@ func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, tempe
 			return 0, err
 		}
 
-		// Ресурсы
 		g.collectResources(planet.ID, planet.Data, spectralClass, &batch.resourceRows)
 	}
 
-	// Записываем всё в БД
 	if err := g.flushBatch(tx, batch); err != nil {
 		return 0, err
 	}
@@ -158,7 +152,7 @@ func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
 // ==================== РЕСУРСЫ ====================
 
 // collectResources — генерирует ресурсы для планеты и добавляет их в буфер.
-// planetType берётся из доминирующей формы поверхности.
+// Тип планеты берётся из доминирующей формы поверхности.
 func (g *Generator) collectResources(
 	planetID string,
 	dataJSON []byte,
@@ -172,7 +166,7 @@ func (g *Generator) collectResources(
 
 	dominant := getString(data, "surface_dominant")
 	if dominant == "" {
-		dominant = "скалы"
+		dominant = SurfaceRocks
 	}
 
 	resources := resource.GenerateResources(planetID, dominant, spectralClass, g.rng)
