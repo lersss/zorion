@@ -14,6 +14,7 @@ import (
 	"zorion/internal/config"
 	"zorion/internal/generator/planet"
 	"zorion/internal/handlers"
+	"zorion/internal/models"
 	"zorion/internal/repository"
 	"zorion/internal/travel"
 )
@@ -55,9 +56,9 @@ func main() {
 		log.Println("✅ Архетипы планет загружены")
 	}
 
-	// Загрузка матрицы совместимости: сначала из БД, при пустой — из JSON
+	// Загрузка матрицы совместимости
 	if err := loadCompatibilityMatrix(); err != nil {
-		log.Printf("⚠️ Не удалось загрузить матрицу совместимости: %v, использую встроенные дефолты", err)
+		log.Printf("⚠️ Матрица совместимости: %v, использую встроенные дефолты", err)
 	}
 
 	worldRepo := repository.NewWorldRepository(db)
@@ -120,8 +121,8 @@ func main() {
 	http.HandleFunc("/admin/generate-factions", auth.AdminAuth(adminHandlers.GenerateFactions))
 	http.HandleFunc("/admin/generate-cancel", auth.AdminAuth(adminHandlers.CancelGeneration))
 
-	// Админка: матрица совместимости
-	http.HandleFunc("/admin/compatibility", auth.AdminAuth(compatHandlers.GetMatrixOrUpdate))
+	// Матрица совместимости
+	http.HandleFunc("/admin/compatibility", auth.AdminAuth(compatHandlers.HandleMatrix))
 	http.HandleFunc("/admin/compatibility/reset", auth.AdminAuth(compatHandlers.ResetMatrix))
 
 	http.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +130,7 @@ func main() {
 	})
 
 	// Статика
-	http.Handle("/static/", http.StripPrefix("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./web/static")))))
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./web/static"))))
 
 	// Страницы
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +173,6 @@ func loadCompatibilityMatrix() error {
 	}
 
 	if count > 0 {
-		// БД не пустая — грузим из неё
 		if err := rebuildCacheFromDB(repo); err != nil {
 			return err
 		}
@@ -180,7 +180,6 @@ func loadCompatibilityMatrix() error {
 		return nil
 	}
 
-	// БД пуста — грузим из JSON
 	if err := planet.LoadCompatibilityMatrix("config/compatibility_defaults.json"); err != nil {
 		return err
 	}
@@ -190,11 +189,11 @@ func loadCompatibilityMatrix() error {
 
 // rebuildCacheFromDB — читает обе категории из БД и пересобирает кеш.
 func rebuildCacheFromDB(repo *repository.CompatibilityRepository) error {
-	surfacePairs, err := repo.LoadAll("surface")
+	surfacePairs, err := repo.LoadAll(models.CompatCategorySurface)
 	if err != nil {
 		return err
 	}
-	subterrainPairs, err := repo.LoadAll("subterrain")
+	subterrainPairs, err := repo.LoadAll(models.CompatCategorySubterrain)
 	if err != nil {
 		return err
 	}
@@ -207,7 +206,7 @@ func rebuildCacheFromDB(repo *repository.CompatibilityRepository) error {
 }
 
 // groupPairs — группирует плоский список пар в map «A → [B, C]».
-func groupPairs(pairs []*compatPair) map[string][]string {
+func groupPairs(pairs []*models.CompatibilityPair) map[string][]string {
 	result := map[string][]string{}
 	for _, p := range pairs {
 		result[p.TypeA] = append(result[p.TypeA], p.TypeB)

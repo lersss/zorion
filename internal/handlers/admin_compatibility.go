@@ -29,16 +29,23 @@ func NewCompatibilityHandlers(db *sql.DB) *CompatibilityHandlers {
 	}
 }
 
+// HandleMatrix — диспетчер: GET → GetMatrix, POST → UpdateMatrix.
+func (h *CompatibilityHandlers) HandleMatrix(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.GetMatrix(w, r)
+	case http.MethodPost:
+		h.UpdateMatrix(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // ==================== GET: ТЕКУЩАЯ МАТРИЦА ====================
 
 // GetMatrix — отдаёт текущую матрицу заданной категории в формате
 // {"category": "...", "forbid": {"форма": ["запрещённая1", ...]}, "total": N}.
 func (h *CompatibilityHandlers) GetMatrix(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	category := r.URL.Query().Get("category")
 	if category == "" {
 		category = models.CompatCategorySurface
@@ -67,24 +74,7 @@ func (h *CompatibilityHandlers) GetMatrix(w http.ResponseWriter, r *http.Request
 // ==================== POST: ОБНОВЛЕНИЕ ====================
 
 // UpdateMatrix — батч-обновление пар в категории.
-//
-// Тело запроса:
-//
-//	{
-//	  "category": "surface",
-//	  "pairs": [
-//	    {"type_a": "лавовые_поля", "type_b": "ледники", "compatible": false},
-//	    {"type_a": "лавовые_поля", "type_b": "океаны",  "compatible": true}
-//	  ]
-//	}
-//
-// После обновления БД — кеш в памяти пересобирается.
 func (h *CompatibilityHandlers) UpdateMatrix(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	var req models.CompatibilityUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -99,7 +89,6 @@ func (h *CompatibilityHandlers) UpdateMatrix(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Валидация: у каждой пары должны быть type_a и type_b
 	for _, p := range req.Pairs {
 		if p.TypeA == "" || p.TypeB == "" {
 			http.Error(w, "type_a and type_b required", http.StatusBadRequest)
@@ -111,17 +100,14 @@ func (h *CompatibilityHandlers) UpdateMatrix(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// 1. Записываем изменения в БД
 	if err := h.repo.SetBatch(req.Category, req.Pairs); err != nil {
 		log.Printf("❌ SetBatch compatibility: %v", err)
 		http.Error(w, "failed to update matrix", http.StatusInternalServerError)
 		return
 	}
 
-	// 2. Пересобираем кеш
 	if err := h.rebuildCache(); err != nil {
 		log.Printf("⚠️ Cache rebuild failed: %v", err)
-		// Не падаем — БД уже обновлена, при рестарте кеш соберётся заново
 	}
 
 	writeJSON(w, map[string]interface{}{
