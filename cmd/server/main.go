@@ -61,6 +61,14 @@ func main() {
 		log.Printf("⚠️ Матрица совместимости: %v, использую встроенные дефолты", err)
 	}
 
+	// Загрузка библиотеки описаний планет.
+	// Критично: без описаний все планеты получат fallback-текст.
+	// Поэтому при ошибке — не стартуем.
+	if err := planet.LoadDescriptionsGlobal("config/descriptions"); err != nil {
+		log.Fatalf("❌ Не удалось загрузить описания планет: %v", err)
+	}
+	log.Println("✅ Описания планет загружены")
+
 	worldRepo := repository.NewWorldRepository(db)
 	locationRepo := repository.NewLocationRepository(db)
 	assignmentRepo := repository.NewAssignmentRepository(db)

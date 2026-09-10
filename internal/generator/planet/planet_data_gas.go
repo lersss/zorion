@@ -73,6 +73,29 @@ func (g *Generator) generateGasGiant(
 		"газы":    0.9 + g.rng.Float64()*0.1,
 	}
 
+	planetID := uuid.New().String()
+
+	// У газового гиганта нет композиции поверхности — передаём nil.
+	// Теги, зависящие от surface (например, cryovolcanic), не сработают.
+	descCtx := DescriptionContext{
+		PlanetID:     planetID,
+		Type:         TypeGasGiant,
+		OrbitIndex:   orbitIndex,
+		Atmosphere:   atmosphere,
+		Hydrosphere:  "сухая",
+		Temperature:  temp,
+		WaterPercent: 0.0,
+		Mass:         mass,
+		Density:      density,
+		Moons:        satelliteCount,
+		Life:         false,
+		Habitable:    false,
+		Population:   0,
+		Surface:      nil,
+		Core:         core,
+		IsGasGiant:   true,
+	}
+
 	data := map[string]interface{}{
 		"size":              size,
 		"mass":              mass,
@@ -95,14 +118,14 @@ func (g *Generator) generateGasGiant(
 		"resources":         resources,
 		"satellites":        satellitesJSON,
 		"surface_dominant":  "газовый_гигант",
-		"type":              "газовый гигант",
+		"type":              TypeGasGiant,
 		"core":              coreToJSON(core),
-		"description":       "Огромная планета из водорода и гелия с множеством спутников.",
+		"description":       GenerateDescription(descCtx),
 	}
 	dataJSON, _ := json.Marshal(data)
 
 	return &PlanetData{
-		ID:         uuid.New().String(),
+		ID:         planetID,
 		WorldID:    worldID,
 		Name:       name,
 		OrbitIndex: orbitIndex,

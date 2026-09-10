@@ -119,6 +119,28 @@ func (g *Generator) generatePlanet(
 		Life:          props.Life,
 	})
 
+	// UUID генерируется ЗАРАНЕЕ — нужен для детерминированного выбора описания.
+	planetID := uuid.New().String()
+
+	descCtx := DescriptionContext{
+		PlanetID:     planetID,
+		Type:         gdType,
+		OrbitIndex:   orbitIndex,
+		Atmosphere:   props.Atmosphere,
+		Hydrosphere:  archetype.Hydrosphere,
+		Temperature:  props.Temperature,
+		WaterPercent: props.WaterPercent,
+		Mass:         props.Mass,
+		Density:      props.Density,
+		Moons:        props.Moons,
+		Life:         props.Life,
+		Habitable:    props.Habitable,
+		Population:   props.Population,
+		Surface:      props.SurfaceComposition,
+		Core:         props.Core,
+		IsGasGiant:   false,
+	}
+
 	data := map[string]interface{}{
 		"size":              props.Size,
 		"mass":              props.Mass,
@@ -141,16 +163,16 @@ func (g *Generator) generatePlanet(
 		"surface_composition":    composeToJSON(props.SurfaceComposition),
 		"subterrain_composition": composeToJSON(props.SubterrainComposition),
 		"surface_dominant":       dominant,
-		"type":                   gdType, // ← геймдизайнерский тип
+		"type":                   gdType,
 		"core":                   coreToJSON(props.Core),
 
-		"description": generateDescription(g.rng, dominant, props.Habitable, props.Life),
+		"description": GenerateDescription(descCtx),
 	}
 
 	dataJSON, _ := json.Marshal(data)
 
 	return &PlanetData{
-		ID:         uuid.New().String(),
+		ID:         planetID,
 		WorldID:    worldID,
 		Name:       name,
 		OrbitIndex: orbitIndex,
@@ -200,6 +222,7 @@ func (g *Generator) generateOceanicPlanet(
 
 	density := densityForPlanet(mass, surfaceComp, g.rng)
 	size := computeRadius(mass, density)
+	moons := int(size / 5)
 
 	core := GenerateCore(mass, "temperate", subterrainComp, systemAge, g.rng)
 
@@ -216,6 +239,27 @@ func (g *Generator) generateOceanicPlanet(
 		political = systems[g.rng.Intn(len(systems))]
 	}
 
+	planetID := uuid.New().String()
+
+	descCtx := DescriptionContext{
+		PlanetID:     planetID,
+		Type:         TypeOceanic,
+		OrbitIndex:   orbitIndex,
+		Atmosphere:   atmosphere,
+		Hydrosphere:  "океаны",
+		Temperature:  temp,
+		WaterPercent: waterPercent,
+		Mass:         mass,
+		Density:      density,
+		Moons:        moons,
+		Life:         life,
+		Habitable:    habitable,
+		Population:   population,
+		Surface:      surfaceComp,
+		Core:         core,
+		IsGasGiant:   false,
+	}
+
 	data := map[string]interface{}{
 		"size":                   size,
 		"mass":                   mass,
@@ -230,21 +274,21 @@ func (g *Generator) generateOceanicPlanet(
 		"population":             population,
 		"political_system":       political,
 		"conflict_level":         0.0,
-		"moons":                  int(size / 5),
+		"moons":                  moons,
 		"development_level":      0.0,
 		"climate":                "temperate",
 		"system_age":             systemAge,
 		"surface_composition":    composeToJSON(surfaceComp),
 		"subterrain_composition": composeToJSON(subterrainComp),
 		"surface_dominant":       SurfaceOceans,
-		"type":                   TypeOceanic, // геймдизайнерский тип
+		"type":                   TypeOceanic,
 		"core":                   coreToJSON(core),
-		"description":            "Планета, почти полностью покрытая океаном. Богатая морская экосистема.",
+		"description":            GenerateDescription(descCtx),
 	}
 	dataJSON, _ := json.Marshal(data)
 
 	return &PlanetData{
-		ID:         uuid.New().String(),
+		ID:         planetID,
 		WorldID:    worldID,
 		Name:       name,
 		OrbitIndex: orbitIndex,
@@ -265,8 +309,12 @@ func (g *Generator) generateRadioactivePlanet(
 		name = "Радиоактивная-" + uuidShort()
 	}
 
-	surfaces := []string{SurfaceMetalFields, SurfaceGlassFields}
-	surface := surfaces[g.rng.Intn(len(surfaces))]
+	// Доминирующая форма поверхности: металлические или стеклянные поля.
+	dominantSurface := SurfaceMetalFields
+	if g.rng.Intn(2) == 0 {
+		dominantSurface = SurfaceGlassFields
+	}
+
 	atmospheres := []string{"плотная", "ядовитая"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
 
@@ -288,9 +336,9 @@ func (g *Generator) generateRadioactivePlanet(
 	life := g.rng.Float64() < 0.05
 
 	surfaceComp := Composition{
-		surface:              50 + g.rng.Float64()*20,
-		SurfaceRocks:         15 + g.rng.Float64()*10,
-		SurfaceCraters:       10 + g.rng.Float64()*10,
+		dominantSurface:       50 + g.rng.Float64()*20,
+		SurfaceRocks:          15 + g.rng.Float64()*10,
+		SurfaceCraters:        10 + g.rng.Float64()*10,
 		SurfaceVolcanicFields: 5 + g.rng.Float64()*10,
 	}.Normalize().NonZero()
 
@@ -304,8 +352,30 @@ func (g *Generator) generateRadioactivePlanet(
 
 	density := 1.2 + g.rng.Float64()*0.6
 	size := computeRadius(mass, density)
+	moons := int(size / 8)
 
 	core := GenerateCore(mass, "extreme", subterrainComp, systemAge, g.rng)
+
+	planetID := uuid.New().String()
+
+	descCtx := DescriptionContext{
+		PlanetID:     planetID,
+		Type:         TypeRadioactive,
+		OrbitIndex:   orbitIndex,
+		Atmosphere:   atmosphere,
+		Hydrosphere:  "сухая",
+		Temperature:  temp,
+		WaterPercent: waterPercent,
+		Mass:         mass,
+		Density:      density,
+		Moons:        moons,
+		Life:         life,
+		Habitable:    false,
+		Population:   0,
+		Surface:      surfaceComp,
+		Core:         core,
+		IsGasGiant:   false,
+	}
 
 	data := map[string]interface{}{
 		"size":                   size,
@@ -321,22 +391,22 @@ func (g *Generator) generateRadioactivePlanet(
 		"population":             0,
 		"political_system":       "нет",
 		"conflict_level":         0.0,
-		"moons":                  int(size / 8),
+		"moons":                  moons,
 		"development_level":      0.0,
 		"climate":                "extreme",
 		"system_age":             systemAge,
 		"radioactive":            true,
 		"surface_composition":    composeToJSON(surfaceComp),
 		"subterrain_composition": composeToJSON(subterrainComp),
-		"surface_dominant":       surface,
-		"type":                   TypeRadioactive, // геймдизайнерский тип
+		"surface_dominant":       dominantSurface,
+		"type":                   TypeRadioactive,
 		"core":                   coreToJSON(core),
-		"description":            "Планета с высоким радиационным фоном, богатая редкими элементами.",
+		"description":            GenerateDescription(descCtx),
 	}
 	dataJSON, _ := json.Marshal(data)
 
 	return &PlanetData{
-		ID:         uuid.New().String(),
+		ID:         planetID,
 		WorldID:    worldID,
 		Name:       name,
 		OrbitIndex: orbitIndex,
