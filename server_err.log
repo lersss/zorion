@@ -6,3 +6,39 @@
 2026/09/10 16:35:51 ✅ Архетипы планет загружены
 2026/09/10 16:35:51 ✅ Матрица совместимости загружена из JSON (БД пуста)
 2026/09/10 16:35:51 🚀 Сервер Zorion запущен и работает
+2026/09/10 16:37:20 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:37:20 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:37:22 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:37:22 🔍 FilterWorldsHandler params: hasPlanets=false, hasLife=false, hasHabitable=false, planetType='', resourceCategory=''
+2026/09/10 16:37:22 🔍 FilterWorldsHandler SQL: 
+		SELECT w.id, w.name, w.coord_x, w.coord_y, w.spectral_class, w.temperature, w.created_at, w.updated_at
+		FROM worlds w
+		WHERE 1=1
+	, args: []
+2026/09/10 16:37:22 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:37:41 Admin auth failed: wrong password
+2026/09/10 16:37:41 Admin auth failed: wrong password
+2026/09/10 16:37:59 Admin auth failed: wrong password
+2026/09/10 16:43:57 🌌 GenerateUniverse: mapSize=8000.0, minDist=150.0, clusterRadius=1200.0, clusterSpacing=200.0, outlierPercent=30%
+2026/09/10 16:43:57 🌌 GenerateUniverse: start with 1000 worlds, 20 clusters
+2026/09/10 16:43:57 ⚠️ Dropped 19 points because they were outside the galaxy circle
+2026/09/10 16:43:57 ✅ Generated 1000 worlds
+2026/09/10 16:43:57 ✅ GenerateUniverse: completed, 1000 worlds saved
+2026/09/10 16:44:14 🌍 GeneratePlanets: starting for 1000 worlds
+2026/09/10 16:44:16 ✅ GeneratePlanets: total = 3140
+2026/09/10 16:44:31 🔍 audit[planet]: 3140 entities, 25 with issues, 30 total issues, 2 ms
+2026/09/10 16:44:40 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:44:40 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:44:41 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:44:41 🔍 FilterWorldsHandler params: hasPlanets=false, hasLife=false, hasHabitable=false, planetType='', resourceCategory=''
+2026/09/10 16:44:41 🔍 FilterWorldsHandler SQL: 
+		SELECT w.id, w.name, w.coord_x, w.coord_y, w.spectral_class, w.temperature, w.created_at, w.updated_at
+		FROM worlds w
+		WHERE 1=1
+	, args: []
+2026/09/10 16:44:41 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:44:57 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:45:04 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:45:07 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:46:57 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
+2026/09/10 16:47:37 Auth: user c990f88f-d66d-49fd-83c2-8606ce92e96d authenticated
