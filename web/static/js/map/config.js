@@ -2,8 +2,8 @@
 import { CONFIG } from '../config.js';
 
 export const state = {
-    worlds: [],
-    filteredWorlds: null,
+    worlds: [],           // кэш отдельных миров (для tooltip/fly/nav)
+    clusters: [],         // текущие кластеры для рендера (с сервера)
     currentWorldId: null,
     isFlying: false,
     flyFrom: null,
@@ -26,7 +26,7 @@ export const state = {
 
 export const elements = {
     canvas: document.getElementById('mapCanvas'),
-    ctx: document.getElementById('mapCanvas').getContext('2d'), // <-- добавлено
+    ctx: document.getElementById('mapCanvas').getContext('2d'),
     tooltip: document.getElementById('tooltip'),
     tooltipName: document.getElementById('tooltipName'),
     tooltipType: document.getElementById('tooltipType'),
