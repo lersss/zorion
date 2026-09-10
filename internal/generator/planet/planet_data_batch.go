@@ -4,156 +4,94 @@ package planet
 import (
 	"database/sql"
 	"fmt"
-	"strings"
+
+	"github.com/lib/pq"
 )
 
-// batchInsertPlanets — вставляет пачку планет в public.planets
-func (g *Generator) batchInsertPlanets(tx *sql.Tx, rows []interface{}) error {
+// ==================== БАТЧ-ВСТАВКА ЧЕРЕЗ pq.CopyIn ====================
+//
+// Раньше был INSERT INTO ... VALUES (...), (...), ... — это медленно:
+//   - Строка SQL длиной 100+ КБ, Postgres парсит её каждый раз.
+//   - Лимит параметров Postgres — 65535, что ограничивает размер батча.
+//   - buildPlaceholders + shiftPlaceholders жгут CPU на каждый батч.
+//
+// Теперь pq.CopyIn — это настоящий COPY FROM STDIN. В 5–10 раз быстрее,
+// без лимита параметров, без парсинга гигантской строки.
+//
+// API: tx.Prepare(pq.CopyIn("table", "col1", ...)) → stmt.Exec(row...) (на каждую строку)
+// → stmt.Exec() (flush) → stmt.Close(). Всё в одной транзакции.
+
+// copyInPlanets — вставляет пачку планет через COPY.
+// rowWidth = 7. Длина rows должна делиться на 7.
+func (g *Generator) copyInPlanets(tx *sql.Tx, rows []interface{}) error {
+	return copyInRows(tx, "planets",
+		[]string{"id", "world_id", "name", "orbit_index", "data", "created_at", "updated_at"},
+		rows, 7)
+}
+
+// copyInSettlements — вставляет пачку поселений через COPY. rowWidth = 6.
+func (g *Generator) copyInSettlements(tx *sql.Tx, rows []interface{}) error {
+	return copyInRows(tx, "settlements",
+		[]string{"id", "planet_id", "level", "population", "capacity", "stability"},
+		rows, 6)
+}
+
+// copyInFactories — вставляет пачку заводов через COPY. rowWidth = 8.
+func (g *Generator) copyInFactories(tx *sql.Tx, rows []interface{}) error {
+	return copyInRows(tx, "factories",
+		[]string{"id", "planet_id", "name", "type", "input_resource", "output_product", "quality", "status"},
+		rows, 8)
+}
+
+// copyInGoods — вставляет пачку партий товаров через COPY. rowWidth = 7.
+func (g *Generator) copyInGoods(tx *sql.Tx, rows []interface{}) error {
+	return copyInRows(tx, "goods_batches",
+		[]string{"id", "planet_id", "product_name", "quantity", "quality", "producer_id", "produced_at"},
+		rows, 7)
+}
+
+// copyInResources — вставляет пачку ресурсов через COPY. rowWidth = 15.
+func (g *Generator) copyInResources(tx *sql.Tx, rows []interface{}) error {
+	return copyInRows(tx, "resources",
+		[]string{
+			"id", "planet_id", "name", "category", "hardness", "elasticity", "conductivity",
+			"heat_resistance", "chemical_activity", "density", "biocompatibility",
+			"energy_density", "volatility", "created_at", "updated_at",
+		},
+		rows, 15)
+}
+
+// ==================== ОБЩАЯ ФУНКЦИЯ ====================
+
+// copyInRows — общая реализация для всех таблиц.
+// rows — плоский срез значений, длина кратна rowWidth.
+func copyInRows(tx *sql.Tx, table string, cols []string, rows []interface{}, rowWidth int) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	query := fmt.Sprintf(
-		"INSERT INTO public.planets (id, world_id, name, orbit_index, data, created_at, updated_at) VALUES %s",
-		buildPlaceholders(len(rows), 7),
-	)
-	args := flattenRows(rows)
-	_, err := tx.Exec(query, args...)
-	return err
-}
-
-// batchInsertSettlements — вставляет пачку поселений
-func (g *Generator) batchInsertSettlements(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
+	if len(rows)%rowWidth != 0 {
+		return fmt.Errorf("copyInRows: len(rows)=%d не кратно rowWidth=%d", len(rows), rowWidth)
 	}
-	query := fmt.Sprintf(
-		"INSERT INTO public.settlements (id, planet_id, level, population, capacity, stability) VALUES %s",
-		buildPlaceholders(len(rows), 6),
-	)
-	args := flattenRows(rows)
-	_, err := tx.Exec(query, args...)
-	return err
-}
 
-// batchInsertFactories — вставляет пачку заводов
-func (g *Generator) batchInsertFactories(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
+	stmt, err := tx.Prepare(pq.CopyIn(table, cols...))
+	if err != nil {
+		return fmt.Errorf("prepare copy %s: %w", table, err)
 	}
-	query := fmt.Sprintf(
-		"INSERT INTO public.factories (id, planet_id, name, type, input_resource, output_product, quality, status) VALUES %s",
-		buildPlaceholders(len(rows), 8),
-	)
-	args := flattenRows(rows)
-	_, err := tx.Exec(query, args...)
-	return err
-}
 
-// batchInsertGoods — вставляет пачку партий товаров
-func (g *Generator) batchInsertGoods(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	query := fmt.Sprintf(
-		"INSERT INTO public.goods_batches (id, planet_id, product_name, quantity, quality, producer_id, produced_at) VALUES %s",
-		buildPlaceholders(len(rows), 7),
-	)
-	args := flattenRows(rows)
-	_, err := tx.Exec(query, args...)
-	return err
-}
-
-// batchInsertResources — вставляет пачку ресурсов
-func (g *Generator) batchInsertResources(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	query := fmt.Sprintf(`INSERT INTO public.resources (
-		id, planet_id, name, category, hardness, elasticity, conductivity,
-		heat_resistance, chemical_activity, density, biocompatibility,
-		energy_density, volatility, created_at, updated_at
-	) VALUES %s`, buildPlaceholders(len(rows), 15))
-	args := flattenRows(rows)
-	_, err := tx.Exec(query, args...)
-	return err
-}
-
-// ==================== УТИЛИТЫ ДЛЯ БАТЧ-ВСТАВКИ ====================
-
-// buildPlaceholders — строит "$1, $2, ... , $N" для одной строки
-// и повторяет её для каждой строки.
-// Пример: rows=2, cols=3 → "($1, $2, $3), ($4, $5, $6)"
-func buildPlaceholders(rows, cols int) string {
-	rowPlaceholder := "("
-	for i := 1; i <= cols; i++ {
-		if i > 1 {
-			rowPlaceholder += ", "
-		}
-		rowPlaceholder += fmt.Sprintf("$%d", i)
-	}
-	rowPlaceholder += ")"
-
-	valueStrings := make([]string, 0, rows)
-	for i := 0; i < rows; i++ {
-		// Сдвигаем номера $N на (i * cols)
-		shifted := rowPlaceholder
-		if i > 0 {
-			shifted = shiftPlaceholders(rowPlaceholder, i*cols)
-		}
-		valueStrings = append(valueStrings, shifted)
-	}
-	return strings.Join(valueStrings, ", ")
-}
-
-// shiftPlaceholders — увеличивает все $N в строке на delta.
-// Пример: "( $1, $2 )" + delta 2 → "( $3, $4 )"
-func shiftPlaceholders(s string, delta int) string {
-	if delta == 0 {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s) + 8)
-
-	i := 0
-	for i < len(s) {
-		if s[i] == '$' {
-			b.WriteByte('$')
-			i++
-			numStart := i
-			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-				i++
-			}
-			if numStart == i {
-				// Не число после $ — оставляем как есть
-				continue
-			}
-			numStr := s[numStart:i]
-			num := 0
-			for _, ch := range numStr {
-				num = num*10 + int(ch-'0')
-			}
-			fmt.Fprintf(&b, "%d", num+delta)
-			continue
-		}
-		b.WriteByte(s[i])
-		i++
-	}
-	return b.String()
-}
-
-// flattenRows — превращает []interface{} из [][]interface{} в плоский []interface{}
-func flattenRows(rows []interface{}) []interface{} {
-	total := 0
-	for _, r := range rows {
-		if rowSlice, ok := r.([]interface{}); ok {
-			total += len(rowSlice)
+	for i := 0; i < len(rows); i += rowWidth {
+		chunk := make([]interface{}, rowWidth)
+		copy(chunk, rows[i:i+rowWidth])
+		if _, err := stmt.Exec(chunk...); err != nil {
+			stmt.Close()
+			return fmt.Errorf("copy %s row %d: %w", table, i/rowWidth, err)
 		}
 	}
-	result := make([]interface{}, 0, total)
-	for _, r := range rows {
-		if rowSlice, ok := r.([]interface{}); ok {
-			result = append(result, rowSlice...)
-		}
+
+	// Финальный Exec без аргументов — flush.
+	if _, err := stmt.Exec(); err != nil {
+		stmt.Close()
+		return fmt.Errorf("copy %s flush: %w", table, err)
 	}
-	return result
+
+	return stmt.Close()
 }

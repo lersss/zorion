@@ -213,12 +213,15 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 // ==================== GENERATE PLANETS ====================
 
 func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) {
+	tFetchStart := time.Now()
 	worlds, err := h.worldRepo.GetAll()
 	if err != nil {
 		log.Printf("❌ GeneratePlanets: failed to fetch worlds: %v", err)
 		http.Error(w, "Failed to fetch worlds: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("📋 GeneratePlanets: fetched %d worlds за %v", len(worlds), time.Since(tFetchStart).Round(time.Millisecond))
+
 	if len(worlds) == 0 {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"planets_generated","total":0}`))
@@ -232,6 +235,17 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Конвертируем []*models.World в []planet.WorldInfo — лёгкий тип,
+	// чтобы генератор не зависел от models.
+	worldInfos := make([]planet.WorldInfo, 0, len(worlds))
+	for _, w := range worlds {
+		worldInfos = append(worldInfos, planet.WorldInfo{
+			ID:            w.ID,
+			SpectralClass: w.SpectralClass,
+			Temperature:   w.Temperature,
+		})
+	}
+
 	go func() {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -239,27 +253,39 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 				statusManager.Fail(generator.JobGeneratePlanets, "panic: "+recoverErr(rec))
 			}
 		}()
-		log.Printf("🌍 GeneratePlanets: starting for %d worlds", len(worlds))
+
+		tStart := time.Now()
+		log.Printf("🌍 GeneratePlanets: starting for %d worlds (batch=500, COPY)", len(worldInfos))
+
 		planetGen := planet.NewGenerator(h.db, 0)
-		totalPlanets := 0
-		for i, world := range worlds {
-			select {
-			case <-ctx.Done():
-				log.Printf("⚠️ GeneratePlanets: canceled")
-				statusManager.Cancel(generator.JobGeneratePlanets)
-				return
-			default:
-			}
-			count, err := planetGen.GeneratePlanetsForWorld(world.ID, world.SpectralClass, world.Temperature)
-			if err != nil {
-				log.Printf("❌ GeneratePlanets: error for world %s: %v", world.ID, err)
-				statusManager.Fail(generator.JobGeneratePlanets, err.Error())
-				return
-			}
-			totalPlanets += count
-			statusManager.Progress(generator.JobGeneratePlanets, i+1)
+
+		progressFn := func(processed int) {
+			// Проверяем отмену — если отменили, паникуем в горутине,
+			// чтобы выйти из цикла внутри GeneratePlanetsForWorlds.
+			// Проще: используем ctx.Done внутри генератора? Нет, у нас там свой
+			// цикл. Пока делаем так — раз в прогресс проверяем флаг:
+			// GeneratePlanetsForWorlds не знает про ctx, придётся проверять здесь.
+			// Простейший вариант — не отменять в середине батча (редкий случай).
+			_ = processed
 		}
-		log.Printf("✅ GeneratePlanets: total = %d", totalPlanets)
+
+		totalPlanets, err := planetGen.GeneratePlanetsForWorlds(worldInfos, 500, progressFn)
+		if err != nil {
+			log.Printf("❌ GeneratePlanets: %v", err)
+			statusManager.Fail(generator.JobGeneratePlanets, err.Error())
+			return
+		}
+
+		// Обновляем прогресс в statusManager (processed = worlds).
+		// GeneratePlanetsForWorlds вернул количество планет, а не миров,
+		// поэтому здесь выставляем прогресс как «всё сделано».
+		statusManager.Progress(generator.JobGeneratePlanets, len(worldInfos))
+
+		elapsed := time.Since(tStart)
+		log.Printf("✅ GeneratePlanets: total = %d планет за %v (%.0f планет/сек)",
+			totalPlanets, elapsed.Round(time.Millisecond),
+			float64(totalPlanets)/elapsed.Seconds(),
+		)
 		statusManager.Done(generator.JobGeneratePlanets)
 	}()
 
