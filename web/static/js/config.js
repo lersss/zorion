@@ -1,6 +1,6 @@
 export const CONFIG = {
     map: {
-        minZoom: 0.02,
+        minZoom: 0.001,        // было 0.02 — теперь можно отдалить до «всей галактики»
         maxZoom: 10,
         zoomStep: 1.2,
         wheelSensitivity: 0.9,
@@ -9,7 +9,7 @@ export const CONFIG = {
         nameFontSize: 10,
         gridStep: 5,
         padding: 80,
-        minRadius: 2,
+        minRadius: 1.5,        // было 2 — чуть меньше, чтобы при отдалении не слипались
         baseRadius: 8,
         nameDisplayThreshold: 0.5,
         gridDisplayThreshold: 10,
