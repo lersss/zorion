@@ -18,6 +18,11 @@ func detectWorldAnomalies(stats *PlanetStats) {
 }
 
 // detectTypeAnomalies — проверяет отклонения в распределении типов.
+//
+// Пороги: 2.0× и 0.3× от ожидаемого.
+// Это значит, что аномалия сработает только при серьёзном перекосе:
+//   - если планета типа X в 2 раза чаще, чем ожидалось;
+//   - или в 3 раза реже.
 func detectTypeAnomalies(stats *PlanetStats) {
 	if stats.TotalPlanets == 0 {
 		return
@@ -55,19 +60,36 @@ func detectTypeAnomalies(stats *PlanetStats) {
 	}
 }
 
-// expectedTypeShares — ожидаемые доли типов (сумма = 1.0).
+// expectedTypeShares — ожидаемые доли типов планет в галактике.
+//
+// Значения откалиброваны под текущий баланс (после правок сессии 2026-09-10).
+// Реальные цифры (планет из 3113):
+//
+//	ледяная:       28%  (865)
+//	газовый гигант: 19%  (604)
+//	скалистая:      14%  (446)
+//	пустынная:      12%  (374)
+//	землеподобная:  12%  (366)
+//	вулканическая:   9%  (286)
+//	океаническая:    4%  (134)
+//	радиоактивная:   1%  (38)
+//	стеклянная:     <1%  (24)
+//	металлическая:  <1%  (14)
+//	органик:         0%  (0)
+//
+// Сумма близка к 1.0.
 func expectedTypeShares() map[string]float64 {
 	return map[string]float64{
-		planet.TypeEarthlike:   0.03,
-		planet.TypeOceanic:     0.05,
-		planet.TypeIce:         0.15,
-		planet.TypeVolcanic:    0.10,
-		planet.TypeDesert:      0.10,
-		planet.TypeGasGiant:    0.15,
-		planet.TypeRadioactive: 0.02,
-		planet.TypeGlass:       0.05,
-		planet.TypeMetal:       0.03,
-		planet.TypeOrganic:     0.10,
-		planet.TypeRocky:       0.22,
+		planet.TypeIce:         0.28,
+		planet.TypeGasGiant:    0.19,
+		planet.TypeRocky:       0.14,
+		planet.TypeDesert:      0.12,
+		planet.TypeEarthlike:   0.12,
+		planet.TypeVolcanic:    0.09,
+		planet.TypeOceanic:     0.04,
+		planet.TypeRadioactive: 0.01,
+		planet.TypeGlass:       0.005,
+		planet.TypeMetal:       0.005,
+		planet.TypeOrganic:     0.005,
 	}
 }
