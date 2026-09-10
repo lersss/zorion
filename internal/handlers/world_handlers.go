@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -30,16 +31,18 @@ func NewWorldHandlers(
 func (h *WorldHandlers) GetAllWorlds(w http.ResponseWriter, r *http.Request) {
 	worlds, err := h.worldRepo.GetAll()
 	if err != nil {
-		http.Error(w, "Ошибка получения миров: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("GetAllWorlds error: %v", err)
+		http.Error(w, "Ошибка получения миров", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(worlds)
 }
 
-// GetWorld возвращает мир по ID с его локациями и заданиями
+// GetWorld возвращает мир по ID с его локациями и заданиями.
+// Ключевая особенность: если locations или assignments падают —
+// это не повод возвращать 500. Мир важнее. Логируем и отдаём что есть.
 func (h *WorldHandlers) GetWorld(w http.ResponseWriter, r *http.Request) {
-	// Извлекаем ID из URL (например, /worlds/123)
 	path := strings.TrimPrefix(r.URL.Path, "/worlds/")
 	if path == "" || path == r.URL.Path {
 		http.Error(w, "ID не указан", http.StatusBadRequest)
@@ -53,7 +56,8 @@ func (h *WorldHandlers) GetWorld(w http.ResponseWriter, r *http.Request) {
 
 	world, err := h.worldRepo.GetByID(id)
 	if err != nil {
-		http.Error(w, "Ошибка получения мира: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("GetWorld: worldRepo.GetByID(%s) error: %v", id, err)
+		http.Error(w, "Ошибка получения мира", http.StatusInternalServerError)
 		return
 	}
 	if world == nil {
@@ -61,16 +65,18 @@ func (h *WorldHandlers) GetWorld(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// locations — вспомогательные данные. Их падение не блокирует ответ.
 	locations, err := h.locationRepo.GetByWorld(id)
 	if err != nil {
-		http.Error(w, "Ошибка получения локаций: "+err.Error(), http.StatusInternalServerError)
-		return
+		log.Printf("GetWorld: locationRepo.GetByWorld(%s) error (пропускаем): %v", id, err)
+		locations = nil
 	}
 
+	// assignments — тоже вспомогательные.
 	assignments, err := h.assignmentRepo.GetByWorld(id)
 	if err != nil {
-		http.Error(w, "Ошибка получения заданий: "+err.Error(), http.StatusInternalServerError)
-		return
+		log.Printf("GetWorld: assignmentRepo.GetByWorld(%s) error (пропускаем): %v", id, err)
+		assignments = nil
 	}
 
 	response := map[string]interface{}{
