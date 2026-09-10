@@ -55,11 +55,9 @@ func main() {
 		log.Println("✅ Архетипы планет загружены")
 	}
 
-	// Загрузка матрицы совместимости форм/типов
-	if err := planet.LoadCompatibilityMatrix("config/compatibility_defaults.json"); err != nil {
+	// Загрузка матрицы совместимости: сначала из БД, при пустой — из JSON
+	if err := loadCompatibilityMatrix(); err != nil {
 		log.Printf("⚠️ Не удалось загрузить матрицу совместимости: %v, использую встроенные дефолты", err)
-	} else {
-		log.Println("✅ Матрица совместимости загружена")
 	}
 
 	worldRepo := repository.NewWorldRepository(db)
@@ -77,6 +75,7 @@ func main() {
 	wsHandler := handlers.NewWebSocketHandler(wsHub)
 	contractHandlers := handlers.NewContractHandlers(assignmentRepo, userRepo)
 	adminHandlers := handlers.NewAdminHandlers(worldRepo, db)
+	compatHandlers := handlers.NewCompatibilityHandlers(db)
 
 	// API открытые
 	http.HandleFunc("/health", healthHandler)
@@ -120,12 +119,17 @@ func main() {
 	http.HandleFunc("/admin/generate-planets", auth.AdminAuth(adminHandlers.GeneratePlanets))
 	http.HandleFunc("/admin/generate-factions", auth.AdminAuth(adminHandlers.GenerateFactions))
 	http.HandleFunc("/admin/generate-cancel", auth.AdminAuth(adminHandlers.CancelGeneration))
+
+	// Админка: матрица совместимости
+	http.HandleFunc("/admin/compatibility", auth.AdminAuth(compatHandlers.GetMatrixOrUpdate))
+	http.HandleFunc("/admin/compatibility/reset", auth.AdminAuth(compatHandlers.ResetMatrix))
+
 	http.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "./web/admin.html")
 	})
 
 	// Статика
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./web/static"))))
+	http.Handle("/static/", http.StripPrefix("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./web/static")))))
 
 	// Страницы
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +157,62 @@ func main() {
 
 	log.Println("🚀 Сервер Zorion запущен и работает")
 	log.Fatal(http.ListenAndServe(":"+cfg.ServerPort, nil))
+}
+
+// ==================== ЗАГРУЗКА МАТРИЦЫ ====================
+
+// loadCompatibilityMatrix — загружает матрицу совместимости.
+// Сначала пробует из БД. Если БД пуста — из JSON-файла дефолтов.
+func loadCompatibilityMatrix() error {
+	repo := repository.NewCompatibilityRepository(db)
+
+	count, err := repo.CountAll()
+	if err != nil {
+		return err
+	}
+
+	if count > 0 {
+		// БД не пустая — грузим из неё
+		if err := rebuildCacheFromDB(repo); err != nil {
+			return err
+		}
+		log.Printf("✅ Матрица совместимости загружена из БД (%d пар)", count)
+		return nil
+	}
+
+	// БД пуста — грузим из JSON
+	if err := planet.LoadCompatibilityMatrix("config/compatibility_defaults.json"); err != nil {
+		return err
+	}
+	log.Println("✅ Матрица совместимости загружена из JSON (БД пуста)")
+	return nil
+}
+
+// rebuildCacheFromDB — читает обе категории из БД и пересобирает кеш.
+func rebuildCacheFromDB(repo *repository.CompatibilityRepository) error {
+	surfacePairs, err := repo.LoadAll("surface")
+	if err != nil {
+		return err
+	}
+	subterrainPairs, err := repo.LoadAll("subterrain")
+	if err != nil {
+		return err
+	}
+
+	surfaceMap := groupPairs(surfacePairs)
+	subterrainMap := groupPairs(subterrainPairs)
+
+	planet.RebuildCompatibilityMatrix(surfaceMap, subterrainMap)
+	return nil
+}
+
+// groupPairs — группирует плоский список пар в map «A → [B, C]».
+func groupPairs(pairs []*compatPair) map[string][]string {
+	result := map[string][]string{}
+	for _, p := range pairs {
+		result[p.TypeA] = append(result[p.TypeA], p.TypeB)
+	}
+	return result
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
