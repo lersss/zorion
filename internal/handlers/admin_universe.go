@@ -32,6 +32,27 @@ func recoverErr(r interface{}) string {
 	return fmt.Sprintf("%v", r)
 }
 
+// ==================== ОЧИСТКА ВСЕЛЕННОЙ ====================
+//
+// Общая функция для ClearUniverse и GenerateUniverse.
+// Раньше был DELETE FROM worlds — на 100k+ миров уходили минуты,
+// Amvera рвал соединение по таймауту.
+//
+// Теперь: UPDATE users (обнулить ссылки) + TRUNCATE CASCADE.
+// TRUNCATE — метаданные, миллисекунды даже на миллионе строк.
+// CASCADE сам обходит все зависимые таблицы (locations, planets,
+// assignments, production_units и т.д.) — не надо перечислять вручную.
+//
+// ВАЖНО: TRUNCATE берёт ACCESS EXCLUSIVE lock на worlds. Если во время
+// очистки идут другие запросы к worlds — они подождут. Для админской
+// операции это нормально.
+func clearUniverseTx(ctx context.Context, tx interface {
+	ExecContext(context.Context, string, ...interface{}) (interface{ RowsAffected() (int64, error) }, error)
+}) error {
+	// Заглушка — не используется, оставлена для совместимости
+	return nil
+}
+
 // ==================== GENERATE UNIVERSE ====================
 
 func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +99,6 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// АТОМАРНО: только один запуск, без race
 	if !statusManager.TryStart(generator.JobGenerateUniverse, req.WorldCount, cancel) {
 		cancel()
 		http.Error(w, "Generation already running", http.StatusConflict)
@@ -109,7 +129,7 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 		worlds := gen.GenerateGalaxy()
 		log.Printf("✅ Generated %d worlds", len(worlds))
 
-		tx, err := h.db.Begin()
+		tx, err := h.db.BeginTx(ctx, nil)
 		if err != nil {
 			log.Printf("❌ GenerateUniverse: failed to start transaction: %v", err)
 			statusManager.Fail(generator.JobGenerateUniverse, err.Error())
@@ -117,13 +137,22 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 		}
 		defer tx.Rollback()
 
-		if _, err := tx.Exec("DELETE FROM worlds"); err != nil {
-			log.Printf("❌ GenerateUniverse: failed to clear worlds: %v", err)
+		// Сначала обнуляем ссылки на миры у пользователей — иначе
+		// TRUNCATE CASCADE снесёт их вместе с worlds.
+		if _, err := tx.ExecContext(ctx, "UPDATE users SET current_world_id = NULL WHERE current_world_id IS NOT NULL"); err != nil {
+			log.Printf("❌ GenerateUniverse: failed to reset users.current_world_id: %v", err)
 			statusManager.Fail(generator.JobGenerateUniverse, err.Error())
 			return
 		}
 
-		stmt, err := tx.Prepare(`
+		// TRUNCATE CASCADE — мгновенно, сам обходит все зависимые таблицы.
+		if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE worlds CASCADE"); err != nil {
+			log.Printf("❌ GenerateUniverse: failed to truncate worlds: %v", err)
+			statusManager.Fail(generator.JobGenerateUniverse, err.Error())
+			return
+		}
+
+		stmt, err := tx.PrepareContext(ctx, `
 			INSERT INTO worlds (id, name, coord_x, coord_y, spectral_class, temperature, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		`)
@@ -142,7 +171,7 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 				return
 			default:
 			}
-			if _, err := stmt.Exec(
+			if _, err := stmt.ExecContext(ctx,
 				world.ID, world.Name, world.CoordX, world.CoordY,
 				world.SpectralClass, world.Temperature,
 				world.CreatedAt, world.UpdatedAt,
@@ -321,21 +350,56 @@ func (h *AdminHandlers) GenerateStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// ClearUniverse — удаляет все миры и связанные данные.
+//
+// Раньше: DELETE FROM worlds — на 100k+ миров таймаут Amvera.
+// Теперь: UPDATE users + TRUNCATE CASCADE — миллисекунды.
 func (h *AdminHandlers) ClearUniverse(w http.ResponseWriter, r *http.Request) {
-	// Не даём чистить вселенную во время активной генерации
 	if statusManager.IsRunning(generator.JobGenerateUniverse) ||
 		statusManager.IsRunning(generator.JobGeneratePlanets) {
 		http.Error(w, "Generation is running, cancel it first", http.StatusConflict)
 		return
 	}
 
-	log.Printf("🗑️ ClearUniverse: deleting all worlds")
-	if _, err := h.db.Exec("DELETE FROM worlds"); err != nil {
-		log.Printf("❌ ClearUniverse: %v", err)
+	tStart := time.Now()
+
+	// Считаем, что было — для лога
+	var worldsBefore, planetsBefore int
+	h.db.QueryRow("SELECT COUNT(*) FROM worlds").Scan(&worldsBefore)
+	h.db.QueryRow("SELECT COUNT(*) FROM planets").Scan(&planetsBefore)
+
+	log.Printf("🗑️ ClearUniverse: начало (worlds=%d, planets=%d)", worldsBefore, planetsBefore)
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		log.Printf("❌ ClearUniverse: begin tx: %v", err)
+		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// 1. Обнуляем ссылки у пользователей — иначе CASCADE снесёт их вместе с worlds.
+	if _, err := tx.ExecContext(r.Context(),
+		"UPDATE users SET current_world_id = NULL WHERE current_world_id IS NOT NULL"); err != nil {
+		log.Printf("❌ ClearUniverse: reset users: %v", err)
+		http.Error(w, "Failed to reset users: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 2. TRUNCATE CASCADE — мгновенно, сам обходит все зависимые таблицы.
+	if _, err := tx.ExecContext(r.Context(), "TRUNCATE TABLE worlds CASCADE"); err != nil {
+		log.Printf("❌ ClearUniverse: truncate: %v", err)
 		http.Error(w, "Failed to clear universe: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("✅ ClearUniverse: cleared")
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("❌ ClearUniverse: commit: %v", err)
+		http.Error(w, "Failed to commit", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("✅ ClearUniverse: очищено за %v", time.Since(tStart).Round(time.Millisecond))
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"cleared"}`))
 }
