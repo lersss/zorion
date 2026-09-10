@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/rand"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +14,16 @@ import (
 	"zorion/internal/repository"
 )
 
+// PlanetData — одна планета перед вставкой в БД
+type PlanetData struct {
+	ID         string
+	WorldID    string
+	Name       string
+	OrbitIndex int
+	Data       []byte
+}
+
+// Generator — генератор планет для мира
 type Generator struct {
 	db           *sql.DB
 	rng          *rand.Rand
@@ -24,6 +32,7 @@ type Generator struct {
 	usedNames    map[string]bool
 }
 
+// NewGenerator — создаёт генератор. Если seed = 0 — берётся time.Now().
 func NewGenerator(db *sql.DB, seed int64) *Generator {
 	if seed == 0 {
 		seed = time.Now().UnixNano()
@@ -37,6 +46,7 @@ func NewGenerator(db *sql.DB, seed int64) *Generator {
 	}
 }
 
+// GeneratePlanetsForWorld — генерирует все планеты мира и сохраняет их в БД.
 func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, temperature int) (int, error) {
 	planetCount := g.determinePlanetCount(spectralClass)
 	if planetCount == 0 {
@@ -49,77 +59,30 @@ func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, tempe
 	}
 	defer tx.Rollback()
 
-	planetRows := make([]interface{}, 0, planetCount)
-	settlementRows := make([]interface{}, 0, planetCount)
-	factoryRows := make([]interface{}, 0, planetCount*2)
-	goodsRows := make([]interface{}, 0, planetCount*4)
-	resourceRows := make([]interface{}, 0, planetCount*4)
+	// Буферы для батч-вставки
+	batch := newBatchBuffers(planetCount)
 
-	planets := make([]*PlanetData, 0, planetCount)
+	// Генерируем каждую планету
 	for i := 0; i < planetCount; i++ {
 		orbitIndex := i + 1
 		planet := g.generatePlanet(worldID, orbitIndex, spectralClass, temperature)
-		planets = append(planets, planet)
+		batch.addPlanet(planet)
 
-		planetRows = append(planetRows, []interface{}{
-			planet.ID,
-			planet.WorldID,
-			planet.Name,
-			planet.OrbitIndex,
-			planet.Data,
-			time.Now(),
-			time.Now(),
-		})
-
-		if err := g.collectEconomy(planet.ID, planet.Data, spectralClass, &settlementRows, &factoryRows, &goodsRows); err != nil {
+		// Экономика (поселения, заводы, товары)
+		if err := g.collectEconomy(
+			planet.ID, planet.Data, spectralClass,
+			&batch.settlementRows, &batch.factoryRows, &batch.goodsRows,
+		); err != nil {
 			return 0, err
 		}
 
-		planetType, _ := g.getPlanetType(planet.Data)
-		resources := resource.GenerateResources(planet.ID, planetType, spectralClass, g.rng)
-		for _, res := range resources {
-			resourceRows = append(resourceRows, []interface{}{
-				res.ID,
-				res.PlanetID,
-				res.Name,
-				res.Category,
-				res.Hardness,
-				res.Elasticity,
-				res.Conductivity,
-				res.HeatResistance,
-				res.ChemicalActivity,
-				res.Density,
-				res.Biocompatibility,
-				res.EnergyDensity,
-				res.Volatility,
-				time.Now(),
-				time.Now(),
-			})
-		}
+		// Ресурсы
+		g.collectResources(planet.ID, planet.Data, spectralClass, &batch.resourceRows)
 	}
 
-	if err := g.batchInsertPlanets(tx, planetRows); err != nil {
+	// Записываем всё в БД
+	if err := g.flushBatch(tx, batch); err != nil {
 		return 0, err
-	}
-	if len(settlementRows) > 0 {
-		if err := g.batchInsertSettlements(tx, settlementRows); err != nil {
-			return 0, err
-		}
-	}
-	if len(factoryRows) > 0 {
-		if err := g.batchInsertFactories(tx, factoryRows); err != nil {
-			return 0, err
-		}
-	}
-	if len(goodsRows) > 0 {
-		if err := g.batchInsertGoods(tx, goodsRows); err != nil {
-			return 0, err
-		}
-	}
-	if len(resourceRows) > 0 {
-		if err := g.batchInsertResources(tx, resourceRows); err != nil {
-			return 0, err
-		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -129,590 +92,147 @@ func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, tempe
 	return planetCount, nil
 }
 
-func (g *Generator) batchInsertPlanets(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	valueStrings := make([]string, 0, len(rows))
-	valueArgs := make([]interface{}, 0, len(rows)*7)
-	for _, row := range rows {
-		rowSlice := row.([]interface{})
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			len(valueArgs)+1, len(valueArgs)+2, len(valueArgs)+3, len(valueArgs)+4,
-			len(valueArgs)+5, len(valueArgs)+6, len(valueArgs)+7))
-		valueArgs = append(valueArgs, rowSlice...)
-	}
-	query := fmt.Sprintf("INSERT INTO public.planets (id, world_id, name, orbit_index, data, created_at, updated_at) VALUES %s",
-		strings.Join(valueStrings, ","))
-	_, err := tx.Exec(query, valueArgs...)
-	return err
+// ==================== БАТЧ-БУФЕР ====================
+
+// batchBuffers — буферы для батч-вставки всех сущностей планеты.
+type batchBuffers struct {
+	planetRows     []interface{}
+	settlementRows []interface{}
+	factoryRows    []interface{}
+	goodsRows      []interface{}
+	resourceRows   []interface{}
 }
 
-func (g *Generator) batchInsertSettlements(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	valueStrings := make([]string, 0, len(rows))
-	valueArgs := make([]interface{}, 0, len(rows)*6)
-	for _, row := range rows {
-		rowSlice := row.([]interface{})
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d)",
-			len(valueArgs)+1, len(valueArgs)+2, len(valueArgs)+3, len(valueArgs)+4,
-			len(valueArgs)+5, len(valueArgs)+6))
-		valueArgs = append(valueArgs, rowSlice...)
-	}
-	query := fmt.Sprintf("INSERT INTO public.settlements (id, planet_id, level, population, capacity, stability) VALUES %s",
-		strings.Join(valueStrings, ","))
-	_, err := tx.Exec(query, valueArgs...)
-	return err
-}
-
-func (g *Generator) batchInsertFactories(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	valueStrings := make([]string, 0, len(rows))
-	valueArgs := make([]interface{}, 0, len(rows)*8)
-	for _, row := range rows {
-		rowSlice := row.([]interface{})
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			len(valueArgs)+1, len(valueArgs)+2, len(valueArgs)+3, len(valueArgs)+4,
-			len(valueArgs)+5, len(valueArgs)+6, len(valueArgs)+7, len(valueArgs)+8))
-		valueArgs = append(valueArgs, rowSlice...)
-	}
-	query := fmt.Sprintf("INSERT INTO public.factories (id, planet_id, name, type, input_resource, output_product, quality, status) VALUES %s",
-		strings.Join(valueStrings, ","))
-	_, err := tx.Exec(query, valueArgs...)
-	return err
-}
-
-func (g *Generator) batchInsertGoods(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	valueStrings := make([]string, 0, len(rows))
-	valueArgs := make([]interface{}, 0, len(rows)*7)
-	for _, row := range rows {
-		rowSlice := row.([]interface{})
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			len(valueArgs)+1, len(valueArgs)+2, len(valueArgs)+3, len(valueArgs)+4,
-			len(valueArgs)+5, len(valueArgs)+6, len(valueArgs)+7))
-		valueArgs = append(valueArgs, rowSlice...)
-	}
-	query := fmt.Sprintf("INSERT INTO public.goods_batches (id, planet_id, product_name, quantity, quality, producer_id, produced_at) VALUES %s",
-		strings.Join(valueStrings, ","))
-	_, err := tx.Exec(query, valueArgs...)
-	return err
-}
-
-func (g *Generator) batchInsertResources(tx *sql.Tx, rows []interface{}) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	valueStrings := make([]string, 0, len(rows))
-	valueArgs := make([]interface{}, 0, len(rows)*15)
-	for _, row := range rows {
-		rowSlice := row.([]interface{})
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			len(valueArgs)+1, len(valueArgs)+2, len(valueArgs)+3, len(valueArgs)+4,
-			len(valueArgs)+5, len(valueArgs)+6, len(valueArgs)+7, len(valueArgs)+8,
-			len(valueArgs)+9, len(valueArgs)+10, len(valueArgs)+11, len(valueArgs)+12,
-			len(valueArgs)+13, len(valueArgs)+14, len(valueArgs)+15))
-		valueArgs = append(valueArgs, rowSlice...)
-	}
-	query := fmt.Sprintf(`INSERT INTO public.resources (
-		id, planet_id, name, category, hardness, elasticity, conductivity,
-		heat_resistance, chemical_activity, density, biocompatibility,
-		energy_density, volatility, created_at, updated_at
-	) VALUES %s`, strings.Join(valueStrings, ","))
-	_, err := tx.Exec(query, valueArgs...)
-	return err
-}
-
-func (g *Generator) determinePlanetCount(spectralClass string) int {
-	switch spectralClass {
-	case "O", "B", "A":
-		return g.rng.Intn(9)
-	case "F", "G":
-		return 2 + g.rng.Intn(7)
-	case "K", "M":
-		return g.rng.Intn(7)
-	default:
-		return g.rng.Intn(5)
+// newBatchBuffers — создаёт буферы с предварительным capacity.
+func newBatchBuffers(planetCount int) *batchBuffers {
+	return &batchBuffers{
+		planetRows:     make([]interface{}, 0, planetCount),
+		settlementRows: make([]interface{}, 0, planetCount),
+		factoryRows:    make([]interface{}, 0, planetCount*2),
+		goodsRows:      make([]interface{}, 0, planetCount*4),
+		resourceRows:   make([]interface{}, 0, planetCount*4),
 	}
 }
 
-// computeEffectiveTemp вычисляет эффективную температуру планеты на основе
-// светимости звезды и орбитального радиуса.
-// Формула: T_eff = T_star * (1 / (r^2 * L))^0.25
-// где r = 0.4 * 1.7^orbitIndex, L — светимость в солнечных единицах.
-func computeEffectiveTemp(starTemp int, orbitIndex int, spectralClass string) float64 {
-	luminosityMap := map[string]float64{
-		"O": 1000, "B": 100, "A": 10, "F": 2, "G": 1, "K": 0.1, "M": 0.01,
-		"L": 0.001, "T": 0.0001, "Y": 0.00001,
-	}
-	L := luminosityMap[spectralClass]
-	if L <= 0 {
-		L = 1.0
-	}
-	r := 0.4 * math.Pow(1.7, float64(orbitIndex))
-	if r <= 0 {
-		r = 0.4
-	}
-	ratio := 1.0 / (r * r * L)
-	if ratio < 0 {
-		ratio = 0
-	}
-	T := float64(starTemp) * math.Pow(ratio, 0.25)
-	if T < 10 {
-		T = 10
-	}
-	if T > 5000 {
-		T = 5000
-	}
-	return T
+// addPlanet — добавляет строку планеты в буфер.
+func (b *batchBuffers) addPlanet(p *PlanetData) {
+	b.planetRows = append(b.planetRows, []interface{}{
+		p.ID,
+		p.WorldID,
+		p.Name,
+		p.OrbitIndex,
+		p.Data,
+		time.Now(),
+		time.Now(),
+	})
 }
 
-func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
-	// --- ГАЗОВЫЙ ГИГАНТ (для горячих звёзд на дальних орбитах) ---
-	if (spectralClass == "O" || spectralClass == "B" || spectralClass == "A") && orbitIndex >= 3 {
-		if g.rng.Float64() < 0.8 {
-			return g.generateGasGiant(worldID, orbitIndex, spectralClass, starTemp)
-		}
-	}
-
-	// --- ОКЕАНИЧЕСКАЯ ПЛАНЕТА (2.5% шанс) ---
-	if g.rng.Float64() < 0.025 {
-		return g.generateOceanicPlanet(worldID, orbitIndex, spectralClass, starTemp)
-	}
-
-	// --- РАДИОАКТИВНАЯ ПЛАНЕТА (1.5% шанс, для горячих звёзд 3%) ---
-	hotStars := map[string]bool{"O": true, "B": true, "A": true}
-	if hotStars[spectralClass] {
-		if g.rng.Float64() < 0.03 {
-			return g.generateRadioactivePlanet(worldID, orbitIndex, spectralClass, starTemp)
-		}
-	} else {
-		if g.rng.Float64() < 0.015 {
-			return g.generateRadioactivePlanet(worldID, orbitIndex, spectralClass, starTemp)
-		}
-	}
-
-	// --- ОБЫЧНАЯ ПЛАНЕТА (архетипы) ---
-	archetype := GenerateArchetype(spectralClass, g.rng)
-	props := GenerateProperties(archetype, orbitIndex, spectralClass, starTemp, g.rng)
-
-	name := names.GeneratePlanetName(g.rng, g.usedNames)
-	if name == "" {
-		name = "Планета-" + uuid.New().String()[:8]
-	}
-
-	data := map[string]interface{}{
-		"type":              props.Type,
-		"size":              props.Size,
-		"mass":              props.Mass,
-		"atmosphere":        props.Atmosphere,
-		"hydrosphere":       archetype.Hydrosphere,
-		"biosphere":         archetype.Biosphere,
-		"temperature":       props.Temperature,
-		"water_percent":     props.WaterPercent,
-		"habitable":         props.Habitable,
-		"life":              props.Life,
-		"resources":         g.generateResourceCategories(spectralClass),
-		"population":        props.Population,
-		"political_system":  props.Political,
-		"conflict_level":    props.ConflictLevel,
-		"moons":             props.Moons,
-		"description":       generateDescription(g.rng, props.Type, props.Habitable, props.Life),
-		"development_level": props.Development,
-	}
-	dataJSON, _ := json.Marshal(data)
-
-	return &PlanetData{
-		ID:         uuid.New().String(),
-		WorldID:    worldID,
-		Name:       name,
-		OrbitIndex: orbitIndex,
-		Data:       dataJSON,
-	}
-}
-
-func (g *Generator) generateGasGiant(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
-	name := names.GeneratePlanetName(g.rng, g.usedNames)
-	if name == "" {
-		name = "Газовый гигант-" + uuid.New().String()[:8]
-	}
-	size := 8 + g.rng.Float64()*20
-	mass := 5 + g.rng.Float64()*15
-	atmospheres := []string{"водородно-гелиевая", "водородная", "гелиевая"}
-	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-
-	// Физическая температура поверхности: зависит от светимости звезды и орбиты.
-	baseTemp := computeEffectiveTemp(starTemp, orbitIndex, spectralClass)
-	// Небольшой разброс ±10% и учёт внутреннего нагрева
-	temp := baseTemp*(0.9+g.rng.Float64()*0.2) + 30
-
-	waterPercent := 0.0
-	habitable := false
-	life := false
-	moons := 3 + g.rng.Intn(8)
-	resources := map[string]float64{
-		"минералы": 0.0 + g.rng.Float64()*0.3,
-		"энергия":  0.7 + g.rng.Float64()*0.3,
-		"органика": 0.0 + g.rng.Float64()*0.2,
-		"редкие":   0.5 + g.rng.Float64()*0.5,
-	}
-	description := "Огромная планета, состоящая в основном из водорода и гелия, с мощной атмосферой и множеством спутников."
-	data := map[string]interface{}{
-		"type":              "газовый гигант",
-		"size":              size,
-		"mass":              mass,
-		"atmosphere":        atmosphere,
-		"hydrosphere":       "сухая",
-		"biosphere":         "стерильная",
-		"temperature":       temp,
-		"water_percent":     waterPercent,
-		"habitable":         habitable,
-		"life":              life,
-		"resources":         resources,
-		"population":        0,
-		"political_system":  "нет",
-		"conflict_level":    0.0,
-		"moons":             moons,
-		"description":       description,
-		"development_level": 0.0,
-	}
-	dataJSON, _ := json.Marshal(data)
-	return &PlanetData{
-		ID:         uuid.New().String(),
-		WorldID:    worldID,
-		Name:       name,
-		OrbitIndex: orbitIndex,
-		Data:       dataJSON,
-	}
-}
-
-func (g *Generator) generateOceanicPlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
-	name := names.GeneratePlanetName(g.rng, g.usedNames)
-	if name == "" {
-		name = "Океаническая-" + uuid.New().String()[:8]
-	}
-	surfaces := []string{"песчаная", "глинистая"}
-	surface := surfaces[g.rng.Intn(len(surfaces))]
-	hydrosphere := "океаны"
-	atmospheres := []string{"азотно-кислородная", "плотная"}
-	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-	size := 0.8 + g.rng.Float64()*1.2
-	mass := 0.5 + g.rng.Float64()*2.5
-
-	// Температура: на океанических планетах вода жидкая, 0–100 °C (273–373 K).
-	temp := 273 + g.rng.Float64()*100
-
-	waterPercent := 70 + g.rng.Float64()*29
-	life := g.rng.Float64() < 0.7
-	habitable := life
-	resources := map[string]float64{
-		"минералы": 0.3 + g.rng.Float64()*0.5,
-		"энергия":  0.1 + g.rng.Float64()*0.3,
-		"органика": 0.6 + g.rng.Float64()*0.4,
-		"редкие":   0.1 + g.rng.Float64()*0.2,
-	}
-	var population int64 = 0
-	political := "нет"
-	if life {
-		basePop := int64(1000000 + g.rng.Float64()*999000000)
-		dev := 0.1 + g.rng.Float64()*0.9
-		population = int64(float64(basePop) * dev)
-		systems := []string{"демократия", "диктатура", "теократия", "корпоратократия", "анархия", "ИИ-управление"}
-		political = systems[g.rng.Intn(len(systems))]
-	}
-	description := "Планета, почти полностью покрытая океаном. Богатая морская экосистема и влажный климат."
-	data := map[string]interface{}{
-		"type":              surface,
-		"size":              size,
-		"mass":              mass,
-		"atmosphere":        atmosphere,
-		"hydrosphere":       hydrosphere,
-		"biosphere":         "растительная",
-		"temperature":       temp,
-		"water_percent":     waterPercent,
-		"habitable":         habitable,
-		"life":              life,
-		"resources":         resources,
-		"population":        population,
-		"political_system":  political,
-		"conflict_level":    0.0,
-		"moons":             int(size / 5),
-		"description":       description,
-		"development_level": 0.0,
-	}
-	dataJSON, _ := json.Marshal(data)
-	return &PlanetData{
-		ID:         uuid.New().String(),
-		WorldID:    worldID,
-		Name:       name,
-		OrbitIndex: orbitIndex,
-		Data:       dataJSON,
-	}
-}
-
-func (g *Generator) generateRadioactivePlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
-	name := names.GeneratePlanetName(g.rng, g.usedNames)
-	if name == "" {
-		name = "Радиоактивная-" + uuid.New().String()[:8]
-	}
-	surfaces := []string{"металлическая", "реголитовая"}
-	surface := surfaces[g.rng.Intn(len(surfaces))]
-	atmospheres := []string{"плотная", "ядовитая"}
-	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-	size := 0.5 + g.rng.Float64()*14.5
-	mass := 0.1 + g.rng.Float64()*19.9
-
-	// Температура: эффективная + внутренний нагрев от радиоактивного распада
-	baseTemp := computeEffectiveTemp(starTemp, orbitIndex, spectralClass)
-	temp := baseTemp + 200 + g.rng.Float64()*200
-	if temp > 1200 {
-		temp = 1200
-	}
-
-	waterPercent := 0.0
-	if g.rng.Float64() < 0.1 {
-		waterPercent = g.rng.Float64() * 20
-	}
-	life := false
-	if g.rng.Float64() < 0.05 {
-		life = true
-	}
-	habitable := false
-	resources := map[string]float64{
-		"минералы": 0.2 + g.rng.Float64()*0.3,
-		"энергия":  0.7 + g.rng.Float64()*0.3,
-		"органика": 0.0 + g.rng.Float64()*0.1,
-		"редкие":   0.8 + g.rng.Float64()*0.2,
-	}
-	description := "Планета с высоким радиационным фоном, богатая редкими радиоактивными элементами. Опасна для жизни без специальной защиты."
-	data := map[string]interface{}{
-		"type":              surface,
-		"size":              size,
-		"mass":              mass,
-		"atmosphere":        atmosphere,
-		"hydrosphere":       "сухая",
-		"biosphere":         "стерильная",
-		"temperature":       temp,
-		"water_percent":     waterPercent,
-		"habitable":         habitable,
-		"life":              life,
-		"resources":         resources,
-		"population":        0,
-		"political_system":  "нет",
-		"conflict_level":    0.0,
-		"moons":             int(size / 8),
-		"description":       description,
-		"development_level": 0.0,
-		"radioactive":       true,
-	}
-	dataJSON, _ := json.Marshal(data)
-	return &PlanetData{
-		ID:         uuid.New().String(),
-		WorldID:    worldID,
-		Name:       name,
-		OrbitIndex: orbitIndex,
-		Data:       dataJSON,
-	}
-}
-
-func (g *Generator) generateResourceCategories(spectralClass string) map[string]float64 {
-	res := map[string]float64{
-		"минералы": 0.0,
-		"энергия":  0.0,
-		"органика": 0.0,
-		"редкие":   0.0,
-	}
-	var mineralsBase, energyBase, organicsBase, rareBase float64
-	dispersion := 0.3
-
-	switch spectralClass {
-	case "O", "B", "A":
-		mineralsBase = 0.7
-		energyBase = 0.4
-		organicsBase = 0.2
-		rareBase = 0.8
-	case "F", "G":
-		mineralsBase = 0.5
-		energyBase = 0.5
-		organicsBase = 0.5
-		rareBase = 0.5
-	case "K", "M":
-		mineralsBase = 0.3
-		energyBase = 0.7
-		organicsBase = 0.8
-		rareBase = 0.3
-	default:
-		mineralsBase = 0.5
-		energyBase = 0.5
-		organicsBase = 0.5
-		rareBase = 0.5
-	}
-
-	res["минералы"] = clamp(mineralsBase+(g.rng.Float64()-0.5)*dispersion, 0, 1)
-	res["энергия"] = clamp(energyBase+(g.rng.Float64()-0.5)*dispersion, 0, 1)
-	res["органика"] = clamp(organicsBase+(g.rng.Float64()-0.5)*dispersion, 0, 1)
-	res["редкие"] = clamp(rareBase+(g.rng.Float64()-0.5)*dispersion, 0, 1)
-
-	return res
-}
-
-func clamp(val, min, max float64) float64 {
-	if val < min {
-		return min
-	}
-	if val > max {
-		return max
-	}
-	return val
-}
-
-func (g *Generator) getPlanetType(data []byte) (string, error) {
-	var d map[string]interface{}
-	if err := json.Unmarshal(data, &d); err != nil {
-		return "", err
-	}
-	t, ok := d["type"].(string)
-	if !ok {
-		return "землеподобная", nil
-	}
-	return t, nil
-}
-
-func (g *Generator) collectEconomy(planetID string, dataJSON []byte, spectralClass string,
-	settlementRows, factoryRows, goodsRows *[]interface{}) error {
-	var data map[string]interface{}
-	if err := json.Unmarshal(dataJSON, &data); err != nil {
+// flushBatch — записывает все буферы в БД в одной транзакции.
+func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
+	if err := g.batchInsertPlanets(tx, b.planetRows); err != nil {
 		return err
 	}
-	if data["type"] == "газовый гигант" || data["radioactive"] == true {
-		return nil
-	}
-
-	habitable, _ := data["habitable"].(bool)
-	life, _ := data["life"].(bool)
-	populationRaw, _ := data["population"].(float64)
-	population := int(populationRaw)
-
-	if !life && population == 0 {
-		return nil
-	}
-
-	level := 1
-	if population > 1000000 {
-		level = 2
-	}
-	if population > 10000000 {
-		level = 3
-	}
-	if !habitable {
-		level = 1
-	}
-
-	capacity := population * 2
-	if capacity < 1000 {
-		capacity = 1000
-	}
-	stability := 40 + g.rng.Intn(41)
-
-	settlementID := uuid.New().String()
-	*settlementRows = append(*settlementRows, []interface{}{
-		settlementID,
-		planetID,
-		level,
-		population,
-		capacity,
-		stability,
-	})
-
-	resources, ok := data["resources"].(map[string]interface{})
-	if ok {
-		recipes := map[string]struct {
-			factoryType string
-			output      string
-		}{
-			"минералы": {"добывающий", "металл"},
-			"энергия":  {"добывающий", "энергоноситель"},
-			"органика": {"перерабатывающий", "еда"},
-			"редкие":   {"перерабатывающий", "компоненты"},
-		}
-		for resourceKey, value := range resources {
-			if val, ok := value.(float64); ok && val > 0.3 {
-				recipe, exists := recipes[resourceKey]
-				if !exists {
-					continue
-				}
-				factoryCount := 1 + g.rng.Intn(2)
-				for i := 0; i < factoryCount; i++ {
-					quality := 30 + g.rng.Intn(41)
-					*factoryRows = append(*factoryRows, []interface{}{
-						uuid.New().String(),
-						planetID,
-						fmt.Sprintf("%s завод %d", recipe.output, i+1),
-						recipe.factoryType,
-						resourceKey,
-						recipe.output,
-						quality,
-						"active",
-					})
-				}
-			}
+	if len(b.settlementRows) > 0 {
+		if err := g.batchInsertSettlements(tx, b.settlementRows); err != nil {
+			return err
 		}
 	}
-
-	goods := []struct {
-		name    string
-		quality int
-		qty     int
-	}{
-		{"еда", 30 + g.rng.Intn(41), 100 + g.rng.Intn(401)},
+	if len(b.factoryRows) > 0 {
+		if err := g.batchInsertFactories(tx, b.factoryRows); err != nil {
+			return err
+		}
 	}
-	possibleGoods := []string{"металл", "энергоноситель", "компоненты", "инструменты"}
-	for i := 0; i < 1+g.rng.Intn(3); i++ {
-		goods = append(goods, struct {
-			name    string
-			quality int
-			qty     int
-		}{
-			name:    possibleGoods[g.rng.Intn(len(possibleGoods))],
-			quality: 30 + g.rng.Intn(41),
-			qty:     50 + g.rng.Intn(201),
-		})
+	if len(b.goodsRows) > 0 {
+		if err := g.batchInsertGoods(tx, b.goodsRows); err != nil {
+			return err
+		}
 	}
-	for _, gd := range goods {
-		*goodsRows = append(*goodsRows, []interface{}{
-			uuid.New().String(),
-			planetID,
-			gd.name,
-			gd.qty,
-			gd.quality,
-			nil,
-			time.Now().Add(-24 * time.Hour),
-		})
+	if len(b.resourceRows) > 0 {
+		if err := g.batchInsertResources(tx, b.resourceRows); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-type PlanetData struct {
-	ID         string
-	WorldID    string
-	Name       string
-	OrbitIndex int
-	Data       []byte
+// ==================== РЕСУРСЫ ====================
+
+// collectResources — генерирует ресурсы для планеты и добавляет их в буфер.
+// planetType берётся из доминирующей формы поверхности.
+func (g *Generator) collectResources(
+	planetID string,
+	dataJSON []byte,
+	spectralClass string,
+	rows *[]interface{},
+) {
+	var data map[string]interface{}
+	if err := json.Unmarshal(dataJSON, &data); err != nil {
+		return
+	}
+
+	dominant := getString(data, "surface_dominant")
+	if dominant == "" {
+		dominant = "скалы"
+	}
+
+	resources := resource.GenerateResources(planetID, dominant, spectralClass, g.rng)
+	for _, res := range resources {
+		*rows = append(*rows, []interface{}{
+			res.ID,
+			res.PlanetID,
+			res.Name,
+			res.Category,
+			res.Hardness,
+			res.Elasticity,
+			res.Conductivity,
+			res.HeatResistance,
+			res.ChemicalActivity,
+			res.Density,
+			res.Biocompatibility,
+			res.EnergyDensity,
+			res.Volatility,
+			time.Now(),
+			time.Now(),
+		})
+	}
 }
 
-func generateDescription(rng *rand.Rand, planetType string, habitable, life bool) string {
-	if life && habitable {
-		adj := []string{"цветущий", "развитый", "мирный", "технологичный", "экологичный"}
-		return fmt.Sprintf("%s мир с богатой биосферой", adj[rng.Intn(len(adj))])
+// ==================== ХЕЛПЕРЫ ДЛЯ JSON ====================
+
+func getString(data map[string]interface{}, key string) string {
+	if val, ok := data[key].(string); ok {
+		return val
 	}
-	if habitable {
-		return "Потенциально пригодная для терраформирования планета."
+	return ""
+}
+
+func getFloat(data map[string]interface{}, key string) float64 {
+	if val, ok := data[key].(float64); ok {
+		return val
 	}
-	return "Безжизненный и суровый мир."
+	return 0
+}
+
+func getBool(data map[string]interface{}, key string) bool {
+	if val, ok := data[key].(bool); ok {
+		return val
+	}
+	return false
+}
+
+// composeToJSON — сериализует Composition в map для JSON-поля.
+func composeToJSON(c Composition) map[string]float64 {
+	if c == nil {
+		return map[string]float64{}
+	}
+	out := make(map[string]float64, len(c))
+	for k, v := range c {
+		out[k] = v
+	}
+	return out
+}
+
+// uuidShort — короткий UUID для fallback-имён.
+func uuidShort() string {
+	return uuid.New().String()[:8]
 }

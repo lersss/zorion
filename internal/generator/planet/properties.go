@@ -1,3 +1,4 @@
+// internal/generator/planet/properties.go
 package planet
 
 import (
@@ -5,51 +6,39 @@ import (
 	"math/rand"
 )
 
+// Properties — физические параметры конкретной планеты.
+// Вместо одного Type теперь две композиции: поверхность и недра.
 type Properties struct {
-	Type          string
-	Size          float64
-	Mass          float64
-	Atmosphere    string
-	Temperature   float64
-	WaterPercent  float64
-	Moons         int
-	Habitable     bool
-	Life          bool
-	Population    int64
-	Political     string
-	ConflictLevel float64
-	Development   float64
+	Size                  float64
+	Mass                  float64
+	Atmosphere            string
+	Temperature           float64
+	WaterPercent          float64
+	Moons                 int
+	Habitable             bool
+	Life                  bool
+	Population            int64
+	Political             string
+	ConflictLevel         float64
+	Development           float64
+	SurfaceComposition    Composition
+	SubterrainComposition Composition
 }
 
-// GenerateProperties создаёт параметры планеты на основе архетипа и орбитальных данных
-func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass string, starTemp int, rng *rand.Rand) *Properties {
-	// 1. Орбитальный радиус (в условных единицах, 1 AU = 1)
-	orbitRadius := 0.4 * math.Pow(1.7, float64(orbitIndex))
+// GenerateProperties — рассчитывает параметры планеты на основе архетипа,
+// орбитальных данных и звёздных характеристик.
+func GenerateProperties(
+	archetype *Archetype,
+	orbitIndex int,
+	spectralClass string,
+	starTemp int,
+	rng *rand.Rand,
+) *Properties {
+	// 1. Эффективная температура (физика)
+	temp := computeEffectiveTemp(starTemp, orbitIndex, spectralClass)
 
-	// 2. Светимость звезды (в солнечных единицах)
-	luminosityMap := map[string]float64{
-		"O": 1000, "B": 100, "A": 10, "F": 2, "G": 1, "K": 0.1, "M": 0.01,
-	}
-	luminosity := luminosityMap[spectralClass]
-	if luminosity == 0 {
-		luminosity = 1.0 // fallback
-	}
-
-	// 3. Эффективная температура планеты (без атмосферы)
-	ratio := 1.0 / (orbitRadius * orbitRadius * luminosity)
-	effectiveTemp := float64(starTemp) * math.Sqrt(math.Sqrt(ratio))
-	if effectiveTemp < 10 {
-		effectiveTemp = 10
-	}
-
-	// 4. Базовые параметры из архетипа
-	size := archetype.SizeMin + rng.Float64()*(archetype.SizeMax-archetype.SizeMin)
-	mass := archetype.MassMin + rng.Float64()*(archetype.MassMax-archetype.MassMin)
-
-	// 5. Температура: effectiveTemp с разбросом ±10%
-	temp := effectiveTemp * (0.9 + rng.Float64()*0.2)
-
-	// Ограничиваем диапазоном архетипа
+	// Разброс ±10% и ограничение по архетипу
+	temp = temp * (0.9 + rng.Float64()*0.2)
 	if temp < archetype.TemperatureMin {
 		temp = archetype.TemperatureMin
 	}
@@ -57,64 +46,23 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 		temp = archetype.TemperatureMax
 	}
 
-	// 6. Вода
-	waterPercent := 0.0
-	if archetype.Hydrosphere != "сухая" && archetype.Hydrosphere != "кислотная" {
-		if temp > 250 && temp < 400 {
-			if rng.Float64() < archetype.WaterChance {
-				waterPercent = 30 + rng.Float64()*60
-			}
-		} else if temp > 150 && temp <= 250 {
-			if rng.Float64() < archetype.WaterChance*0.7 {
-				waterPercent = 20 + rng.Float64()*40
-			}
-		} else {
-			if rng.Float64() < archetype.WaterChance*0.3 {
-				waterPercent = 10 + rng.Float64()*20
-			}
-		}
-	}
-	// Переопределяем для конкретных гидросфер
-	switch archetype.Hydrosphere {
-	case "океаны":
-		waterPercent = 70 + rng.Float64()*25
-	case "озёра":
-		waterPercent = 20 + rng.Float64()*40
-	case "ледяной покров":
-		waterPercent = 5 + rng.Float64()*20
-	case "подлёдная":
-		waterPercent = 50 + rng.Float64()*40
-	}
+	// 2. Размер и масса
+	size := archetype.SizeMin + rng.Float64()*(archetype.SizeMax-archetype.SizeMin)
+	mass := archetype.MassMin + rng.Float64()*(archetype.MassMax-archetype.MassMin)
 
-	// 7. Жизнь
-	life := false
-	if archetype.Biosphere != "стерильная" && waterPercent > 10 && temp > 200 && temp < 400 {
-		if rng.Float64() < archetype.LifeChance {
-			life = true
-		}
-	}
+	// 3. Вода
+	waterPercent := generateWater(archetype, temp, rng)
 
-	// 8. Обитаемость
-	habitable := false
-	if life && waterPercent > 10 && temp > 200 && temp < 350 && archetype.Atmosphere != "ядовитая" {
-		habitable = true
-	}
+	// 4. Жизнь
+	life := generateLife(archetype, waterPercent, temp, rng)
 
-	// 9. Атмосфера (из архетипа)
-	atmosphere := archetype.Atmosphere
+	// 5. Обитаемость
+	habitable := generateHabitable(life, waterPercent, temp, archetype.Atmosphere)
 
-	// 10. Спутники
-	moons := 0
-	switch archetype.Surface {
-	case "скалистая", "песчаная", "глинистая", "стеклянная":
-		moons = int(size / 5)
-	case "ледяная", "реголитовая", "металлическая":
-		moons = int(size / 8)
-	default:
-		moons = 0
-	}
+	// 6. Спутники (у газовых гигантов — своя логика, здесь — обычные планеты)
+	moons := determineMoons(size, archetype.Climate, rng)
 
-	// 11. Население
+	// 7. Население
 	var population int64 = 0
 	if life && habitable {
 		basePop := int64(1000000 + rng.Float64()*999000000)
@@ -122,38 +70,147 @@ func GenerateProperties(archetype *Archetype, orbitIndex int, spectralClass stri
 		population = int64(float64(basePop) * dev)
 	}
 
-	// 12. Политика
+	// 8. Политика
 	political := "нет"
 	if population > 0 {
-		systems := []string{"демократия", "диктатура", "теократия", "корпоратократия", "анархия", "ИИ-управление"}
+		systems := []string{
+			"демократия", "диктатура", "теократия",
+			"корпоратократия", "анархия", "ИИ-управление",
+		}
 		political = systems[rng.Intn(len(systems))]
 	}
 
-	// 13. Конфликт
+	// 9. Конфликт и развитие
 	conflict := 0.0
-	if population > 0 {
-		conflict = rng.Float64()
-	}
-
-	// 14. Развитие
 	devLevel := 0.0
 	if population > 0 {
+		conflict = rng.Float64()
 		devLevel = 0.1 + rng.Float64()*0.9
 	}
 
+	// 10. Композиция поверхности
+	surfaceComp := GenerateSurfaceComposition(
+		archetype.BaseSurface,
+		temp,
+		waterPercent,
+		rng,
+	)
+
+	// 11. Композиция недр (зависит от поверхности)
+	subterrainComp := GenerateSubterrainComposition(
+		archetype.BaseSubterrain,
+		surfaceComp,
+		temp,
+		waterPercent,
+		rng,
+	)
+
 	return &Properties{
-		Type:          archetype.Surface,
-		Size:          size,
-		Mass:          mass,
-		Atmosphere:    atmosphere,
-		Temperature:   temp,
-		WaterPercent:  waterPercent,
-		Moons:         moons,
-		Habitable:     habitable,
-		Life:          life,
-		Population:    population,
-		Political:     political,
-		ConflictLevel: conflict,
-		Development:   devLevel,
+		Size:                  size,
+		Mass:                  mass,
+		Atmosphere:            archetype.Atmosphere,
+		Temperature:           temp,
+		WaterPercent:          waterPercent,
+		Moons:                 moons,
+		Habitable:             habitable,
+		Life:                  life,
+		Population:            population,
+		Political:             political,
+		ConflictLevel:         conflict,
+		Development:           devLevel,
+		SurfaceComposition:    surfaceComp,
+		SubterrainComposition: subterrainComp,
 	}
+}
+
+// ==================== ХЕЛПЕРЫ ====================
+
+// generateWater — определяет процент воды на планете.
+func generateWater(archetype *Archetype, temp float64, rng *rand.Rand) float64 {
+	// Конкретные гидросферы переопределяют значение
+	switch archetype.Hydrosphere {
+	case "океаны":
+		return 70 + rng.Float64()*25
+	case "озёра":
+		return 20 + rng.Float64()*40
+	case "ледяной покров":
+		return 5 + rng.Float64()*20
+	case "подлёдная":
+		return 50 + rng.Float64()*40
+	case "кислотная":
+		return 0
+	case "сухая":
+		return 0
+	}
+
+	// Обычный расчёт по температуре
+	if temp > 250 && temp < 400 {
+		if rng.Float64() < archetype.WaterChance {
+			return 30 + rng.Float64()*60
+		}
+	} else if temp > 150 && temp <= 250 {
+		if rng.Float64() < archetype.WaterChance*0.7 {
+			return 20 + rng.Float64()*40
+		}
+	} else {
+		if rng.Float64() < archetype.WaterChance*0.3 {
+			return 10 + rng.Float64()*20
+		}
+	}
+	return 0
+}
+
+// generateLife — определяет, есть ли жизнь на планете.
+func generateLife(archetype *Archetype, waterPercent, temp float64, rng *rand.Rand) bool {
+	if archetype.Biosphere == "стерильная" {
+		return false
+	}
+	if waterPercent <= 10 {
+		return false
+	}
+	if temp <= 200 || temp >= 400 {
+		return false
+	}
+	return rng.Float64() < archetype.LifeChance
+}
+
+// generateHabitable — определяет, пригодна ли планета для жизни.
+func generateHabitable(life bool, waterPercent, temp float64, atmosphere string) bool {
+	if !life {
+		return false
+	}
+	if waterPercent <= 10 {
+		return false
+	}
+	if temp <= 200 || temp >= 350 {
+		return false
+	}
+	if atmosphere == "ядовитая" {
+		return false
+	}
+	return true
+}
+
+// determineMoons — количество спутников у обычной планеты.
+// Зависит от размера и климата.
+func determineMoons(size float64, climate string, rng *rand.Rand) int {
+	base := 0
+	switch climate {
+	case "hot", "extreme":
+		base = int(size / 10) // меньше спутников у горячих
+	case "cold":
+		base = int(size / 6) // больше у холодных
+	default:
+		base = int(size / 8)
+	}
+	if base < 0 {
+		base = 0
+	}
+	// ±1 случайность
+	jitter := rng.Intn(3) - 1
+	moons := base + jitter
+	if moons < 0 {
+		moons = 0
+	}
+	return moons
 }
