@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"zorion/internal/generator/resource"
 	"zorion/internal/repository"
+	"zorion/internal/resource"
 )
 
 // PlanetData — одна планета перед вставкой в БД
@@ -157,8 +157,7 @@ func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
 //   - surface_dominant — доминирующая форма поверхности;
 //   - subterrain_composition — композиция недр.
 //
-// Газовые гиганты пропускаются — у них нет ни поверхности, ни недр
-// (там ресурсы идут от атмосферы, отдельный механизм).
+// Газовые гиганты пропускаются — у них нет ни поверхности, ни недр.
 func (g *Generator) collectResources(
 	planetID string,
 	dataJSON []byte,
@@ -170,7 +169,6 @@ func (g *Generator) collectResources(
 		return
 	}
 
-	// Пропускаем газовые гиганты
 	if isGasGiant(data) {
 		return
 	}
@@ -212,7 +210,6 @@ func (g *Generator) collectResources(
 }
 
 // extractSubterrainComposition — вытаскивает композицию недр из JSON планеты.
-// Формат в JSON: {"subterrain_composition": {"рудные_жилы": 25.0, ...}}.
 func extractSubterrainComposition(data map[string]interface{}) map[string]float64 {
 	result := map[string]float64{}
 	raw, ok := data["subterrain_composition"].(map[string]interface{})
