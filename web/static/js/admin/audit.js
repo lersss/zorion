@@ -1,15 +1,15 @@
 // web/static/js/admin/audit.js
 //
 // Аудит планет: запрос /admin/audit, рендер результата.
-// Запускается вручную по кнопке.
+// Использует fetchWithAuth из auth.js — единый способ авторизации в админке.
 
-import { CONFIG } from '../config.js';
+import { fetchWithAuth } from './auth.js';
 
 const API_URL = '/admin/audit';
 
 // ---------- СОСТОЯНИЕ ----------
 let lastResult = null;
-let showAllSamples = false; // при false — показываем первые 50 примеров
+let showAllSamples = false;
 
 // ---------- ПУБЛИЧНЫЙ API ----------
 
@@ -28,9 +28,7 @@ export async function runAudit() {
     `;
 
     try {
-        const res = await fetch(API_URL, {
-            headers: { 'X-Admin-Token': localStorage.getItem('adminToken') || '' }
-        });
+        const res = await fetchWithAuth(API_URL);
 
         if (!res.ok) {
             throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -58,7 +56,24 @@ function renderAudit(container, result) {
     // Сводка
     container.appendChild(buildSummary(result));
 
-    // Кнопка "показать все примеры"
+    // Если аномалий нет — показываем зелёное сообщение и выходим
+    if (result.total_issues === 0) {
+        const noIssues = document.createElement('div');
+        noIssues.style.cssText = `
+            text-align: center;
+            padding: 40px;
+            color: #4ade80;
+            font-size: 1.1rem;
+        `;
+        noIssues.textContent = '✅ Противоречий не найдено';
+        container.appendChild(noIssues);
+        return;
+    }
+
+    // Таблица кодов проблем
+    container.appendChild(buildCodesTable(result));
+
+    // Кнопка "показать все примеры" (если примеров > 50)
     if (result.sample_issues && result.sample_issues.length > 50) {
         const toggleBtn = document.createElement('button');
         toggleBtn.textContent = showAllSamples
@@ -81,26 +96,8 @@ function renderAudit(container, result) {
         container.appendChild(toggleBtn);
     }
 
-    // Агрегация по кодам
-    container.appendChild(buildCodesTable(result));
-
-    // Примеры проблем
+    // Таблица примеров
     container.appendChild(buildSamplesTable(result));
-
-    // Если аномалий нет
-    if (result.total_issues === 0) {
-        const noIssues = document.createElement('div');
-        noIssues.style.cssText = `
-            text-align: center;
-            padding: 40px;
-            color: #4ade80;
-            font-size: 1.1rem;
-        `;
-        noIssues.textContent = '✅ Противоречий не найдено';
-        container.innerHTML = '';
-        container.appendChild(buildSummary(result));
-        container.appendChild(noIssues);
-    }
 }
 
 // ---------- СВОДКА ----------
@@ -116,8 +113,16 @@ function buildSummary(result) {
 
     const cells = [
         { label: 'Всего планет', value: result.total_entities },
-        { label: 'С проблемами', value: result.entities_with_issues, color: result.entities_with_issues > 0 ? '#f59e0b' : '#4ade80' },
-        { label: 'Всего проблем', value: result.total_issues, color: result.total_issues > 0 ? '#ef4444' : '#4ade80' },
+        {
+            label: 'С проблемами',
+            value: result.entities_with_issues,
+            color: result.entities_with_issues > 0 ? '#f59e0b' : '#4ade80'
+        },
+        {
+            label: 'Всего проблем',
+            value: result.total_issues,
+            color: result.total_issues > 0 ? '#ef4444' : '#4ade80'
+        },
         { label: 'Время', value: result.duration_ms + ' мс' },
     ];
 
@@ -154,7 +159,6 @@ function buildCodesTable(result) {
     title.style.cssText = 'margin: 0 0 10px 0; font-size: 1rem; color: #aaa;';
     wrapper.appendChild(title);
 
-    // Сортируем по убыванию количества
     const entries = Object.entries(result.issues_by_code)
         .sort((a, b) => b[1] - a[1]);
 
@@ -194,14 +198,12 @@ function buildCodesTable(result) {
     return wrapper;
 }
 
-// guessSeverity — пытаемся угадать уровень по коду (fallback, если в API нет соответствия).
-// Основной источник — сами Sample Issues (там есть severity).
+// guessSeverity — уровень из Sample Issues (там есть), иначе эвристика.
 function guessSeverity(code, result) {
     if (result.sample_issues) {
         const sample = result.sample_issues.find(i => i.code === code);
         if (sample) return sample.severity;
     }
-    // Эвристика
     if (code.includes('nan') || code.includes('negative') || code.includes('zero')
         || code.includes('sum_not_100') || code.includes('flag_mismatch')) {
         return 'high';
@@ -258,9 +260,10 @@ function buildSamplesTable(result) {
         const color = issue.severity === 'high' ? '#ef4444'
             : issue.severity === 'medium' ? '#f59e0b'
             : '#94a3b8';
+        const name = issue.entity_name || issue.entity_id;
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td style="padding: 5px 4px; border-bottom:1px solid #1a1a2e;">${issue.entity_name || issue.entity_id}</td>
+            <td style="padding: 5px 4px; border-bottom:1px solid #1a1a2e;">${name}</td>
             <td style="padding: 5px 4px; border-bottom:1px solid #1a1a2e; font-family: monospace; color:${color};">${issue.code}</td>
             <td style="padding: 5px 4px; border-bottom:1px solid #1a1a2e; color: #cbd5e1;">${issue.description}</td>
         `;
