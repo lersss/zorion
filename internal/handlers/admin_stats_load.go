@@ -27,8 +27,7 @@ func (h *AdminHandlers) loadWorlds() ([]worldInfo, error) {
 	result := []worldInfo{}
 	for rows.Next() {
 		var w worldInfo
-		var coordX, coordY float64
-		if err := rows.Scan(&w.ID, &coordX, &coordY, &w.SpectralClass, &w.Temperature); err != nil {
+		if err := rows.Scan(&w.ID, &w.SpectralClass, &w.Temperature); err != nil {
 			continue
 		}
 		result = append(result, w)
