@@ -32,9 +32,20 @@ var AllGameDesignTypes = []string{
 	TypeGasGiant,
 }
 
-// classificationThreshold — минимальная доля формы, при которой она
-// считается «присутствующей» для классификации.
-const classificationThreshold = 15.0
+// ==================== ПОРОГИ ====================
+
+const (
+	// Минимальная доля формы, при которой она считается «присутствующей»
+	// для классификации.
+	presenceThreshold = 15.0
+
+	// Порог для вулканической: сумма лавы + вулканических полей.
+	volcanicThreshold = 20.0
+
+	// Порог для пустынной: минимальная доля песков + максимум воды.
+	desertSandsThreshold = 25.0
+	desertWaterMax       = 25.0
+)
 
 // PlanetClassificationInput — входные данные для классификации.
 type PlanetClassificationInput struct {
@@ -50,13 +61,9 @@ type PlanetClassificationInput struct {
 // ClassifyGameDesignType — определяет геймдизайнерский тип планеты
 // на основе её свойств и композиции поверхности.
 //
-// Порядок проверок важен:
-//  1. Сначала — специфичные флаги (газовый гигант, радиоактивная).
-//  2. Затем — землеподобная (самый узкий набор условий).
-//  3. Затем — остальные типы по убыванию специфичности.
-//  4. Fallback — «скалистая (базовая)».
+// Порядок проверок: от самых специфичных к общим. Fallback — скалистая.
 func ClassifyGameDesignType(in PlanetClassificationInput) string {
-	// 1. Газовый гигант — самый специфичный случай
+	// 1. Газовый гигант
 	if in.IsGasGiant {
 		return TypeGasGiant
 	}
@@ -66,7 +73,7 @@ func ClassifyGameDesignType(in PlanetClassificationInput) string {
 		return TypeRadioactive
 	}
 
-	// 3. Землеподобная: обитаема + есть жизнь + и скалы, и вода
+	// 3. Землеподобная: обитаема + жизнь + скалы + вода
 	if in.Habitable && in.Life &&
 		in.Surface.Has(SurfaceRocks) &&
 		(in.Surface.Has(SurfaceOceans) || in.Surface.Has(SurfaceLakes)) {
@@ -84,22 +91,23 @@ func ClassifyGameDesignType(in PlanetClassificationInput) string {
 	}
 
 	// 6. Вулканическая: заметная доля лавы или вулканических полей
-	if in.Surface.ShareOf(SurfaceLavaFields)+in.Surface.ShareOf(SurfaceVolcanicFields) >= classificationThreshold {
+	if in.Surface.ShareOf(SurfaceLavaFields)+in.Surface.ShareOf(SurfaceVolcanicFields) >= volcanicThreshold {
 		return TypeVolcanic
 	}
 
-	// 7. Пустынная: доминируют пески, мало воды
-	if in.Surface.DominantForm() == SurfaceSands && in.WaterPercent < 20 {
+	// 7. Пустынная: много песков и мало воды
+	if in.Surface.ShareOf(SurfaceSands) >= desertSandsThreshold &&
+		in.WaterPercent < desertWaterMax {
 		return TypeDesert
 	}
 
 	// 8. Стеклянная
-	if in.Surface.ShareOf(SurfaceGlassFields) >= classificationThreshold {
+	if in.Surface.ShareOf(SurfaceGlassFields) >= presenceThreshold {
 		return TypeGlass
 	}
 
 	// 9. Металлическая
-	if in.Surface.ShareOf(SurfaceMetalFields) >= classificationThreshold {
+	if in.Surface.ShareOf(SurfaceMetalFields) >= presenceThreshold {
 		return TypeMetal
 	}
 
@@ -108,7 +116,7 @@ func ClassifyGameDesignType(in PlanetClassificationInput) string {
 		return TypeOrganic
 	}
 
-	// 11. Fallback — «скалистая (базовая)»
+	// 11. Fallback
 	return TypeRocky
 }
 
@@ -128,7 +136,6 @@ func isBiosphereForm(form string) bool {
 }
 
 // GameDesignTypeName — читаемое название типа (для UI).
-// Сейчас совпадает с кодом, но оставляем на случай переименования.
 func GameDesignTypeName(code string) string {
 	return code
 }
