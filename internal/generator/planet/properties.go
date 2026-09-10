@@ -27,17 +27,6 @@ type Properties struct {
 }
 
 // GenerateProperties — рассчитывает параметры планеты на основе архетипа.
-//
-// Порядок:
-//  1. Масса (первична).
-//  2. Предварительная композиция поверхности — для плотности и альбедо.
-//  3. Плотность → размер (R = (M/ρ)^(1/3)).
-//  4. Предварительная композиция недр — для ядра.
-//  5. Ядро.
-//  6. Температура (с альбедо, парником, ядром).
-//  7. Вода.
-//  8. Пересборка композиций с реальными T и водой.
-//  9. Жизнь, обитаемость, население.
 func GenerateProperties(
 	archetype *Archetype,
 	orbitIndex int,
@@ -48,15 +37,15 @@ func GenerateProperties(
 	// 1. Масса — первичный параметр
 	mass := archetype.MassMin + rng.Float64()*(archetype.MassMax-archetype.MassMin)
 
-	// 2. Предварительная композиция поверхности (нужна для плотности и альбедо)
+	// 2. Предварительная композиция поверхности
 	preliminarySurface := GenerateSurfaceComposition(
 		archetype.BaseSurface,
-		0, 0, // T и вода ещё не известны
+		0, 0,
 		rng,
 	)
 
 	// 3. Плотность и размер
-	density := densityForPlanet(mass, preliminarySurface)
+	density := densityForPlanet(mass, preliminarySurface, rng)
 	size := computeRadius(mass, density)
 
 	// 4. Предварительная композиция недр
@@ -156,31 +145,23 @@ func GenerateProperties(
 // ==================== ПЛОТНОСТЬ И РАЗМЕР ====================
 
 // densityForPlanet — плотность планеты (в единицах Земли).
-//
-// Зависит от состава поверхности:
-//   - скалистые/металлические — 0.9–1.3;
-//   - ледяные/газовые — 0.5–0.8;
-//   - океанические — 0.8–1.0;
-//   - газовые гиганты (mass > 30) — 0.2–0.3.
-func densityForPlanet(mass float64, surface Composition) float64 {
-	// Газовые гиганты — низкая плотность
+func densityForPlanet(mass float64, surface Composition, rng *rand.Rand) float64 {
 	if mass > 30 {
-		return 0.2 + rand01()*0.1
+		return 0.2 + rng.Float64()*0.1
 	}
 
 	dominant := surface.DominantForm()
 	switch dominant {
 	case SurfaceGlaciers, SurfaceFrozenGases:
-		return 0.5 + rand01()*0.3
+		return 0.5 + rng.Float64()*0.3
 	case SurfaceOceans, SurfaceLakes:
-		return 0.8 + rand01()*0.2
+		return 0.8 + rng.Float64()*0.2
 	case SurfaceMetalFields:
-		return 1.2 + rand01()*0.4
+		return 1.2 + rng.Float64()*0.4
 	case SurfaceGlassFields:
-		return 1.0 + rand01()*0.2
+		return 1.0 + rng.Float64()*0.2
 	default:
-		// Скалы, пески, кратеры, биосферные
-		return 0.9 + rand01()*0.4
+		return 0.9 + rng.Float64()*0.4
 	}
 }
 
@@ -195,12 +176,6 @@ func computeRadius(mass, density float64) float64 {
 	}
 	return math.Pow(mass/density, 1.0/3.0)
 }
-
-// rand01 — маленькая вспомогательная функция. Возвращает случайное [0,1).
-// Не использует rng, потому что плотность — микро-колебание вокруг базы,
-// её не критично делать детерминированной от общего seed.
-// Заменяется на rng.Float64() там, где важно.
-var rand01 = func() float64 { return 0.5 } // заглушка, переопределяется ниже
 
 // ==================== ВОДА, ЖИЗНЬ, СПУТНИКИ ====================
 
