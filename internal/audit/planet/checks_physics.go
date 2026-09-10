@@ -95,9 +95,10 @@ func checkNegativeShares(v *View) []audit.Issue {
 
 // checkFormMinTemp — универсальная проверка «форма при слишком низкой T».
 //
-// Формирует код на латинице: <formCode>_in_cold.
-// Для этого каждая форма имеет свой английский код (см. formCodes).
-func checkFormMinTemp(v *View, form string, minTemp float64) []audit.Issue {
+// Severity задаётся снаружи, потому что для разных форм оно разное:
+//   - биосферные формы (луга, леса, болота) — SeverityLow (аномалия);
+//   - лава, океаны и т.п. — SeverityHigh (физически невозможно).
+func checkFormMinTemp(v *View, form string, minTemp float64, severity string) []audit.Issue {
 	share := v.Surface[form]
 	if share < 1 {
 		return nil
@@ -106,7 +107,7 @@ func checkFormMinTemp(v *View, form string, minTemp float64) []audit.Issue {
 		return nil
 	}
 	code := formCode(form) + "_in_cold"
-	return []audit.Issue{newIssueWithDetails(v, code, audit.SeverityHigh,
+	return []audit.Issue{newIssueWithDetails(v, code, severity,
 		fmt.Sprintf("%s %.1f%% при температуре %.0f K (минимум %.0f K)", form, share, v.Temperature, minTemp),
 		map[string]interface{}{"form": form, "share": share, "temperature": v.Temperature, "min_temp": minTemp})}
 }
@@ -131,30 +132,34 @@ func formCode(form string) string {
 	return form
 }
 
+// --- Биосферные формы в холоде: низкая критичность (аномалия) ---
+
 // checkJunglesInCold — джунгли при низкой температуре.
 func checkJunglesInCold(v *View) []audit.Issue {
-	return checkFormMinTemp(v, "джунгли", 280)
+	return checkFormMinTemp(v, "джунгли", 280, audit.SeverityLow)
 }
 
 // checkForestsInCold — леса при низкой температуре.
 func checkForestsInCold(v *View) []audit.Issue {
-	return checkFormMinTemp(v, "леса", 250)
+	return checkFormMinTemp(v, "леса", 250, audit.SeverityLow)
 }
 
 // checkMeadowsInCold — луга/степи при низкой температуре.
 func checkMeadowsInCold(v *View) []audit.Issue {
-	return checkFormMinTemp(v, "луга_степи", 250)
+	return checkFormMinTemp(v, "луга_степи", 250, audit.SeverityLow)
 }
 
 // checkSwampsInCold — болота при низкой температуре.
 func checkSwampsInCold(v *View) []audit.Issue {
-	return checkFormMinTemp(v, "болота", 260)
+	return checkFormMinTemp(v, "болота", 260, audit.SeverityLow)
 }
 
 // checkCoralReefsInCold — коралловые рифы при низкой температуре.
 func checkCoralReefsInCold(v *View) []audit.Issue {
-	return checkFormMinTemp(v, "коралловые_рифы", 275)
+	return checkFormMinTemp(v, "коралловые_рифы", 275, audit.SeverityLow)
 }
+
+// --- Прочие формы: средняя/высокая критичность ---
 
 // checkGlaciersInHeat — ледники при высокой температуре.
 func checkGlaciersInHeat(v *View) []audit.Issue {
@@ -214,6 +219,8 @@ func checkOceansWithoutWater(v *View) []audit.Issue {
 }
 
 // checkBiosphereWithoutWater — биосферные формы при малом количестве воды.
+//
+// Пониженная критичность: возможно, это локальные оазисы.
 func checkBiosphereWithoutWater(v *View) []audit.Issue {
 	if v.WaterPercent >= 10 {
 		return nil
@@ -223,7 +230,7 @@ func checkBiosphereWithoutWater(v *View) []audit.Issue {
 	for _, form := range biosphereForms {
 		share := v.Surface[form]
 		if share >= 1 {
-			issues = append(issues, newIssueWithDetails(v, "biosphere_without_water", audit.SeverityHigh,
+			issues = append(issues, newIssueWithDetails(v, "biosphere_without_water", audit.SeverityLow,
 				fmt.Sprintf("%s %.1f%% при water=%.1f%% (минимум 10%%)", form, share, v.WaterPercent),
 				map[string]interface{}{"form": form, "share": share, "water": v.WaterPercent}))
 		}
@@ -264,14 +271,20 @@ func checkMethaneInHeat(v *View) []audit.Issue {
 }
 
 // checkHydrogenInHeat — водородно-гелиевая, водородная, гелиевая при высокой T.
+//
+// Газовые гиганты исключены: у них H-He атмосфера по определению,
+// и даже горячие газовые гиганты — норма.
 func checkHydrogenInHeat(v *View) []audit.Issue {
+	if v.IsGasGiant {
+		return nil
+	}
 	if v.Temperature <= 700 {
 		return nil
 	}
 	switch v.Atmosphere {
 	case "водородно-гелиевая", "водородная", "гелиевая":
 		return []audit.Issue{newIssueWithDetails(v, "hydrogen_in_heat", audit.SeverityMedium,
-			fmt.Sprintf("Водородно-гелиевая атмосфера при температуре %.0f K (водород улетучится)", v.Temperature),
+			fmt.Sprintf("Водородная атмосфера при температуре %.0f K (водород улетучится)", v.Temperature),
 			map[string]interface{}{"atmosphere": v.Atmosphere, "temperature": v.Temperature})}
 	}
 	return nil

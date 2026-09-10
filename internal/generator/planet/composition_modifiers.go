@@ -17,11 +17,10 @@ func applyRandomJitter(c map[string]float64, rng *rand.Rand) {
 
 // applySurfaceTempModifiers — корректирует веса поверхности по температуре.
 //
-// Правила:
-//   - при очень высоких T удаляем биосферу, лёд, воду;
-//   - при очень низких T удаляем биосферу, воду;
-//   - лава физически невозможна при T < 500 K;
-//   - ледники не выживают при T > 320 K.
+// Логика:
+//   - при экстремальных T (жар/холод) биосферные формы удаляются совсем;
+//   - в «пограничной зоне» (220–250 K) сильно подавляются (×0.05),
+//     но не удаляются — остаётся шанс на локальную аномалию.
 func applySurfaceTempModifiers(c map[string]float64, temperature float64) {
 	switch {
 	case temperature > 700:
@@ -30,7 +29,6 @@ func applySurfaceTempModifiers(c map[string]float64, temperature float64) {
 		multiplyIfExists(c, SurfaceVolcanicFields, 1.3)
 		multiplyIfExists(c, SurfaceGlassFields, 1.4)
 		multiplyIfExists(c, SurfaceMetalFields, 1.2)
-		// Удаляем всё, что физически не выживет
 		delete(c, SurfaceOceans)
 		delete(c, SurfaceLakes)
 		delete(c, SurfaceGlaciers)
@@ -42,7 +40,7 @@ func applySurfaceTempModifiers(c map[string]float64, temperature float64) {
 		delete(c, SurfaceCoralReefs)
 
 	case temperature > 500:
-		// Очень жарко — лава/воду ещё можно, биосферу — нет
+		// Очень жарко
 		multiplyIfExists(c, SurfaceLavaFields, 1.5)
 		multiplyIfExists(c, SurfaceVolcanicFields, 1.2)
 		multiplyIfExists(c, SurfaceGlassFields, 1.2)
@@ -57,7 +55,7 @@ func applySurfaceTempModifiers(c map[string]float64, temperature float64) {
 		multiplyIfExists(c, SurfaceLakes, 0.3)
 
 	case temperature < 220:
-		// Очень холодно — биосфера физически невозможна
+		// Очень холодно — биосфера удаляется
 		delete(c, SurfaceJungles)
 		delete(c, SurfaceForests)
 		delete(c, SurfaceMeadows)
@@ -69,12 +67,13 @@ func applySurfaceTempModifiers(c map[string]float64, temperature float64) {
 		multiplyIfExists(c, SurfaceFrozenGases, 1.5)
 
 	case temperature < 250:
-		// Холодно — биосфера на грани
+		// Холодно — биосфера сильно подавляется, но не удаляется.
+		// Остаётся шанс на локальный «оазис» — редкую аномалию.
 		delete(c, SurfaceJungles)
 		delete(c, SurfaceCoralReefs)
-		multiplyIfExists(c, SurfaceForests, 0.2)
-		multiplyIfExists(c, SurfaceMeadows, 0.3)
-		multiplyIfExists(c, SurfaceSwamps, 0.2)
+		multiplyIfExists(c, SurfaceForests, 0.05)
+		multiplyIfExists(c, SurfaceMeadows, 0.05)
+		multiplyIfExists(c, SurfaceSwamps, 0.05)
 		multiplyIfExists(c, SurfaceGlaciers, 1.4)
 		multiplyIfExists(c, SurfaceFrozenGases, 1.3)
 
@@ -85,12 +84,10 @@ func applySurfaceTempModifiers(c map[string]float64, temperature float64) {
 		multiplyIfExists(c, SurfaceLakes, 1.1)
 	}
 
-	// Абсолютные физические запреты (независимо от климата):
-	// лава не бывает при T < 500 K
+	// Абсолютные физические запреты (независимо от климата)
 	if temperature < 500 {
 		delete(c, SurfaceLavaFields)
 	}
-	// ледники не выживают при T > 320 K
 	if temperature > 320 {
 		delete(c, SurfaceGlaciers)
 		delete(c, SurfaceFrozenGases)
@@ -100,8 +97,6 @@ func applySurfaceTempModifiers(c map[string]float64, temperature float64) {
 // ==================== ПОВЕРХНОСТЬ: ВОДА ====================
 
 // applySurfaceWaterModifiers — корректирует веса поверхности по проценту воды.
-//
-// Ключевое правило: биосферные формы требуют воды > 10%.
 func applySurfaceWaterModifiers(c map[string]float64, waterPercent float64) {
 	switch {
 	case waterPercent > 70:
@@ -197,33 +192,28 @@ func applySurfaceToSubterrainLinks(c map[string]float64, surface Composition) {
 		return
 	}
 
-	// Вулканические/лавовые поля → магма, руды, сера
 	if surface.ShareOf(SurfaceLavaFields)+surface.ShareOf(SurfaceVolcanicFields) > 25 {
 		multiplyIfExists(c, SubterrainMagmaChambers, 1.4)
 		multiplyIfExists(c, SubterrainMagmaticRocks, 1.2)
 		multiplyIfExists(c, SubterrainOreVeins, 1.2)
 	}
 
-	// Океаны → нефть на шельфе, соляные купола, осадочные породы
 	if surface.ShareOf(SurfaceOceans) > 30 {
 		multiplyIfExists(c, SubterrainOilPockets, 1.4)
 		multiplyIfExists(c, SubterrainSaltDomes, 1.3)
 		multiplyIfExists(c, SubterrainSedimentaryRocks, 1.2)
 	}
 
-	// Леса/болота → уголь (захоронённая биомасса)
 	if surface.ShareOf(SurfaceForests)+surface.ShareOf(SurfaceSwamps) > 20 {
 		multiplyIfExists(c, SubterrainCoalSeams, 1.5)
 		multiplyIfExists(c, SubterrainOilPockets, 1.2)
 	}
 
-	// Ледники → подземные льды, кристаллические жилы
 	if surface.ShareOf(SurfaceGlaciers) > 30 {
 		multiplyIfExists(c, SubterrainGroundIce, 1.5)
 		multiplyIfExists(c, SubterrainCrystalVeins, 1.2)
 	}
 
-	// Кратеры → руды от метеоритов, редкие металлы
 	if surface.ShareOf(SurfaceCraters) > 15 {
 		multiplyIfExists(c, SubterrainOreVeins, 1.3)
 		multiplyIfExists(c, SubterrainRareEarthVeins, 1.3)
