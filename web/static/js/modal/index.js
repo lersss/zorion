@@ -1,9 +1,15 @@
 // web/static/js/modal/index.js
 import { modalState, resetState } from './state.js';
-import { drawSystem } from './modal_render.js'; // <-- обновлён импорт
+import { drawSystem } from './modal_render.js';
 import { initEvents } from './events.js';
 import { clearTextureCache } from './textures.js';
 import { getStarColor, getStarSize } from './utils.js';
+
+// Перевод Кельвинов в Цельсии
+function kelvinToCelsius(k) {
+    if (typeof k !== 'number' || isNaN(k)) return '—';
+    return (k - 273.15).toFixed(1);
+}
 
 export function openSystemModal(worldId, worldName, spectralClass) {
     const token = localStorage.getItem('token');
@@ -43,7 +49,7 @@ function renderModal(worldName, spectralClass, planets) {
     const starColor = getStarColor(spectralClass);
     const starRadius = getStarSize(spectralClass);
 
-    // Создаём оверлей
+    // Оверлей
     const overlay = document.createElement('div');
     overlay.id = 'system-modal-overlay';
     overlay.style.cssText = `
@@ -58,7 +64,7 @@ function renderModal(worldName, spectralClass, planets) {
         animation: fadeIn 0.2s ease;
     `;
 
-    // Модальное окно
+    // Модалка
     const modal = document.createElement('div');
     modal.style.cssText = `
         background: #1a1a2e;
@@ -105,7 +111,7 @@ function renderModal(worldName, spectralClass, planets) {
     header.appendChild(closeBtn);
     modal.appendChild(header);
 
-    // Контент: Canvas + правая панель
+    // Контент
     const content = document.createElement('div');
     content.style.cssText = `
         display: flex;
@@ -158,11 +164,9 @@ function renderModal(worldName, spectralClass, planets) {
         if (e.target === overlay) closeModal();
     });
 
-    // ESC для закрытия
+    // ESC
     function handleKeydown(e) {
-        if (e.key === 'Escape') {
-            closeModal();
-        }
+        if (e.key === 'Escape') closeModal();
     }
     document.addEventListener('keydown', handleKeydown);
 
@@ -183,23 +187,19 @@ function renderModal(worldName, spectralClass, planets) {
 
     clearTextureCache();
 
-    // Первоначальная отрисовка системы
     requestAnimationFrame(() => {
         drawSystem(canvas, spectralClass, planets, starRadius, starColor, width, height);
     });
 
-    // Рендерим правую панель (список)
     renderRightPanel(planets, null);
 
-    // Инициализация событий (ховер, зум, панорамирование, клик)
     initEvents(canvas, spectralClass, planets, starRadius, starColor, width, height);
 
-    // Глобальная функция для обновления правой панели из events.js
     window.updateRightPanel = (selectedIndex) => {
         renderRightPanel(planets, selectedIndex);
     };
 
-    // Обработчик клика по строкам таблицы
+    // Клик по строке таблицы
     rightPanel.addEventListener('click', (e) => {
         const row = e.target.closest('tr');
         if (row && row.dataset.index !== undefined) {
@@ -214,7 +214,7 @@ function renderModal(worldName, spectralClass, planets) {
         }
     });
 
-    // Resize observer
+    // Resize
     const resizeObserver = new ResizeObserver(() => {
         const newRect = canvasWrapper.getBoundingClientRect();
         modalState.canvasWidth = newRect.width;
@@ -223,7 +223,6 @@ function renderModal(worldName, spectralClass, planets) {
     });
     resizeObserver.observe(canvasWrapper);
 
-    // Сохраняем слушатель ESC для удаления
     modalState._escListener = handleKeydown;
 }
 
@@ -232,7 +231,7 @@ function renderRightPanel(planets, selectedIndex) {
     if (!panel) return;
 
     if (selectedIndex === null || selectedIndex === undefined) {
-        // ---- РЕЖИМ СПИСКА ----
+        // ---- СПИСОК ----
         panel.innerHTML = `
             <h3 style="margin: 0 0 8px 0; font-size: 1rem; color: #aaa;">Планеты</h3>
             <table style="width:100%; border-collapse: collapse; font-size: 0.8rem;">
@@ -258,7 +257,7 @@ function renderRightPanel(planets, selectedIndex) {
                     <td>${idx + 1}</td>
                     <td>${p.type || 'неизвестно'}</td>
                     <td>${p.size ? p.size.toFixed(1) : '-'}</td>
-                    <td>${p.temperature ? p.temperature.toFixed(0) + 'K' : '-'}</td>
+                    <td>${p.temperature ? kelvinToCelsius(p.temperature) + ' °C' : '-'}</td>
                 `;
                 tr.addEventListener('mouseenter', () => { tr.style.background = '#1f1f3a'; });
                 tr.addEventListener('mouseleave', () => { tr.style.background = 'transparent'; });
@@ -270,7 +269,7 @@ function renderRightPanel(planets, selectedIndex) {
             tbody.appendChild(tr);
         }
     } else {
-        // ---- РЕЖИМ КАРТОЧКИ С ВКЛАДКАМИ ----
+        // ---- КАРТОЧКА ----
         const planet = planets[selectedIndex];
         if (!planet) {
             renderRightPanel(planets, null);
@@ -303,9 +302,7 @@ function renderRightPanel(planets, selectedIndex) {
         }
 
         tabBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                switchTab(btn.dataset.tab);
-            });
+            btn.addEventListener('click', () => switchTab(btn.dataset.tab));
         });
 
         switchTab('general');
@@ -333,7 +330,7 @@ function renderTabContent(tab, planet, container) {
                 <p><strong>Размер:</strong> ${planet.size ? planet.size.toFixed(2) : '—'}</p>
                 <p><strong>Масса:</strong> ${planet.mass ? planet.mass.toFixed(2) : '—'}</p>
                 <p><strong>Атмосфера:</strong> ${planet.atmosphere || '—'}</p>
-                <p><strong>Температура:</strong> ${planet.temperature ? planet.temperature.toFixed(0) + ' K' : '—'}</p>
+                <p><strong>Температура:</strong> ${planet.temperature ? kelvinToCelsius(planet.temperature) + ' °C' : '—'}</p>
                 <p><strong>Вода:</strong> ${planet.water_percent ? planet.water_percent.toFixed(1) + '%' : '—'}</p>
                 <p><strong>Обитаемость:</strong> ${planet.habitable ? 'Да' : 'Нет'}</p>
                 <p><strong>Жизнь:</strong> ${planet.life ? 'Да' : 'Нет'}</p>
@@ -399,7 +396,6 @@ function closeModal() {
     const overlay = document.getElementById('system-modal-overlay');
     if (overlay) overlay.remove();
     resetState();
-    // Удаляем слушатель ESC
     if (modalState._escListener) {
         document.removeEventListener('keydown', modalState._escListener);
         delete modalState._escListener;
@@ -407,7 +403,7 @@ function closeModal() {
     delete window.updateRightPanel;
 }
 
-// Добавляем стиль анимации
+// Стиль анимации
 if (!document.getElementById('modal-fade-style')) {
     const style = document.createElement('style');
     style.id = 'modal-fade-style';

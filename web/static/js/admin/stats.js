@@ -1,6 +1,12 @@
 // web/static/js/admin/stats.js
 import { fetchWithAuth } from './auth.js';
 
+// Перевод Кельвинов в Цельсии
+function kelvinToCelsius(k) {
+    if (typeof k !== 'number' || isNaN(k)) return '—';
+    return (k - 273.15).toFixed(1);
+}
+
 export async function loadStats() {
     try {
         const res = await fetchWithAuth('/admin/stats');
@@ -35,7 +41,7 @@ export function renderPlanetStats(stats, container) {
     html += `<div class="stat-card"><strong>С жизнью:</strong> ${stats.life_count}</div>`;
     html += `<div class="stat-card"><strong>Средний размер:</strong> ${stats.avg_size.toFixed(2)}</div>`;
     html += `<div class="stat-card"><strong>Средняя масса:</strong> ${stats.avg_mass.toFixed(2)}</div>`;
-    html += `<div class="stat-card"><strong>Средняя температура:</strong> ${stats.avg_temp.toFixed(0)}K</div>`;
+    html += `<div class="stat-card"><strong>Средняя температура:</strong> ${kelvinToCelsius(stats.avg_temp)} °C</div>`;
     html += `<div class="stat-card"><strong>Средняя вода:</strong> ${stats.avg_water.toFixed(1)}%</div>`;
     html += `<div class="stat-card"><strong>Среднее население:</strong> ${stats.avg_population.toLocaleString()}</div>`;
     html += `</div>`;

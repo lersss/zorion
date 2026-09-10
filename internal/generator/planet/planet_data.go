@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"time"
@@ -241,6 +242,37 @@ func (g *Generator) determinePlanetCount(spectralClass string) int {
 	}
 }
 
+// computeEffectiveTemp вычисляет эффективную температуру планеты на основе
+// светимости звезды и орбитального радиуса.
+// Формула: T_eff = T_star * (1 / (r^2 * L))^0.25
+// где r = 0.4 * 1.7^orbitIndex, L — светимость в солнечных единицах.
+func computeEffectiveTemp(starTemp int, orbitIndex int, spectralClass string) float64 {
+	luminosityMap := map[string]float64{
+		"O": 1000, "B": 100, "A": 10, "F": 2, "G": 1, "K": 0.1, "M": 0.01,
+		"L": 0.001, "T": 0.0001, "Y": 0.00001,
+	}
+	L := luminosityMap[spectralClass]
+	if L <= 0 {
+		L = 1.0
+	}
+	r := 0.4 * math.Pow(1.7, float64(orbitIndex))
+	if r <= 0 {
+		r = 0.4
+	}
+	ratio := 1.0 / (r * r * L)
+	if ratio < 0 {
+		ratio = 0
+	}
+	T := float64(starTemp) * math.Pow(ratio, 0.25)
+	if T < 10 {
+		T = 10
+	}
+	if T > 5000 {
+		T = 5000
+	}
+	return T
+}
+
 func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass string, starTemp int) *PlanetData {
 	// --- ГАЗОВЫЙ ГИГАНТ (для горячих звёзд на дальних орбитах) ---
 	if (spectralClass == "O" || spectralClass == "B" || spectralClass == "A") && orbitIndex >= 3 {
@@ -280,6 +312,8 @@ func (g *Generator) generatePlanet(worldID string, orbitIndex int, spectralClass
 		"size":              props.Size,
 		"mass":              props.Mass,
 		"atmosphere":        props.Atmosphere,
+		"hydrosphere":       archetype.Hydrosphere,
+		"biosphere":         archetype.Biosphere,
 		"temperature":       props.Temperature,
 		"water_percent":     props.WaterPercent,
 		"habitable":         props.Habitable,
@@ -312,8 +346,12 @@ func (g *Generator) generateGasGiant(worldID string, orbitIndex int, spectralCla
 	mass := 5 + g.rng.Float64()*15
 	atmospheres := []string{"водородно-гелиевая", "водородная", "гелиевая"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-	baseTemp := float64(starTemp) * 0.3
-	temp := baseTemp + g.rng.Float64()*100 - 50
+
+	// Физическая температура поверхности: зависит от светимости звезды и орбиты.
+	baseTemp := computeEffectiveTemp(starTemp, orbitIndex, spectralClass)
+	// Небольшой разброс ±10% и учёт внутреннего нагрева
+	temp := baseTemp*(0.9+g.rng.Float64()*0.2) + 30
+
 	waterPercent := 0.0
 	habitable := false
 	life := false
@@ -330,6 +368,8 @@ func (g *Generator) generateGasGiant(worldID string, orbitIndex int, spectralCla
 		"size":              size,
 		"mass":              mass,
 		"atmosphere":        atmosphere,
+		"hydrosphere":       "сухая",
+		"biosphere":         "стерильная",
 		"temperature":       temp,
 		"water_percent":     waterPercent,
 		"habitable":         habitable,
@@ -364,7 +404,10 @@ func (g *Generator) generateOceanicPlanet(worldID string, orbitIndex int, spectr
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
 	size := 0.8 + g.rng.Float64()*1.2
 	mass := 0.5 + g.rng.Float64()*2.5
+
+	// Температура: на океанических планетах вода жидкая, 0–100 °C (273–373 K).
 	temp := 273 + g.rng.Float64()*100
+
 	waterPercent := 70 + g.rng.Float64()*29
 	life := g.rng.Float64() < 0.7
 	habitable := life
@@ -390,6 +433,7 @@ func (g *Generator) generateOceanicPlanet(worldID string, orbitIndex int, spectr
 		"mass":              mass,
 		"atmosphere":        atmosphere,
 		"hydrosphere":       hydrosphere,
+		"biosphere":         "растительная",
 		"temperature":       temp,
 		"water_percent":     waterPercent,
 		"habitable":         habitable,
@@ -423,7 +467,14 @@ func (g *Generator) generateRadioactivePlanet(worldID string, orbitIndex int, sp
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
 	size := 0.5 + g.rng.Float64()*14.5
 	mass := 0.1 + g.rng.Float64()*19.9
-	temp := 300 + g.rng.Float64()*400
+
+	// Температура: эффективная + внутренний нагрев от радиоактивного распада
+	baseTemp := computeEffectiveTemp(starTemp, orbitIndex, spectralClass)
+	temp := baseTemp + 200 + g.rng.Float64()*200
+	if temp > 1200 {
+		temp = 1200
+	}
+
 	waterPercent := 0.0
 	if g.rng.Float64() < 0.1 {
 		waterPercent = g.rng.Float64() * 20
@@ -445,6 +496,8 @@ func (g *Generator) generateRadioactivePlanet(worldID string, orbitIndex int, sp
 		"size":              size,
 		"mass":              mass,
 		"atmosphere":        atmosphere,
+		"hydrosphere":       "сухая",
+		"biosphere":         "стерильная",
 		"temperature":       temp,
 		"water_percent":     waterPercent,
 		"habitable":         habitable,
