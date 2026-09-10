@@ -45,6 +45,10 @@ const (
 	// Порог для пустынной: минимальная доля песков + максимум воды.
 	desertSandsThreshold = 25.0
 	desertWaterMax       = 25.0
+
+	// Порог температуры для ледяной: если доминируют ледники
+	// и температура ниже этой отметки — ледяная.
+	iceTempMax = 250.0
 )
 
 // PlanetClassificationInput — входные данные для классификации.
@@ -85,8 +89,12 @@ func ClassifyGameDesignType(in PlanetClassificationInput) string {
 		return TypeOceanic
 	}
 
-	// 5. Ледяная: доминируют ледники, или очень холодно
-	if in.Surface.DominantForm() == SurfaceGlaciers || in.Temperature < 200 {
+	// 5. Ледяная: доминируют ледники И холодно
+	//    (раньше было "ИЛИ T < 200" — отсюда перекос)
+	if in.Surface.DominantForm() == SurfaceGlaciers && in.Temperature < iceTempMax {
+		return TypeIce
+	}
+	if in.Temperature < 150 {
 		return TypeIce
 	}
 

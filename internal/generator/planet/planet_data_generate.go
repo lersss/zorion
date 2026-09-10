@@ -45,6 +45,29 @@ func determineSystemAge(spectralClass string, rng *rand.Rand) float64 {
 	}
 }
 
+// ==================== ГАЗОВЫЕ ГИГАНТЫ ====================
+
+// gasGiantChance — шанс газового гиганта на дальней орбите
+// в зависимости от спектрального класса звезды.
+//
+// Физически у горячих звёзд (O, B, A) больше материала для формирования
+// гигантов. У холодных (K, M) тоже бывают, но реже (меньше материала
+// в протопланетном диске).
+func gasGiantChance(spectralClass string) float64 {
+	switch spectralClass {
+	case "O", "B", "A":
+		return 0.8
+	case "F", "G":
+		return 0.5
+	case "K", "M":
+		return 0.3
+	case "L", "T", "Y":
+		return 0.1
+	default:
+		return 0.3
+	}
+}
+
 // ==================== ОБЫЧНАЯ ПЛАНЕТА ====================
 
 func (g *Generator) generatePlanet(
@@ -54,8 +77,9 @@ func (g *Generator) generatePlanet(
 	systemAge float64,
 ) *PlanetData {
 	// --- ГАЗОВЫЙ ГИГАНТ ---
-	if (spectralClass == "O" || spectralClass == "B" || spectralClass == "A") && orbitIndex >= 3 {
-		if g.rng.Float64() < 0.8 {
+	// На дальних орбитах, шанс зависит от спектра.
+	if orbitIndex >= 3 {
+		if g.rng.Float64() < gasGiantChance(spectralClass) {
 			return g.generateGasGiant(worldID, orbitIndex, spectralClass, systemAge)
 		}
 	}
@@ -144,7 +168,6 @@ func (g *Generator) generateOceanicPlanet(
 	atmospheres := []string{"азотно-кислородная", "плотная"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
 
-	// Масса 0.5–3 M⊕
 	mass := 0.5 + g.rng.Float64()*2.5
 
 	temp := 273 + g.rng.Float64()*100
@@ -169,7 +192,6 @@ func (g *Generator) generateOceanicPlanet(
 		SubterrainEmptyRock:        10,
 	}.Normalize().NonZero()
 
-	// Плотность океанической — 0.8–1.0, размер из массы
 	density := densityForPlanet(mass, surfaceComp, g.rng)
 	size := computeRadius(mass, density)
 
@@ -242,7 +264,6 @@ func (g *Generator) generateRadioactivePlanet(
 	atmospheres := []string{"плотная", "ядовитая"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
 
-	// Масса 0.5–10 M⊕
 	mass := 0.5 + g.rng.Float64()*9.5
 
 	luminosity := luminosityBySpectral(spectralClass)
@@ -275,7 +296,6 @@ func (g *Generator) generateRadioactivePlanet(
 		SubterrainOreVeins:         15,
 	}.Normalize().NonZero()
 
-	// Плотность выше обычной — металлическая кора
 	density := 1.2 + g.rng.Float64()*0.6
 	size := computeRadius(mass, density)
 
