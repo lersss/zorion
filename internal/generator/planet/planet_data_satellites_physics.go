@@ -10,29 +10,41 @@ import (
 
 // computeSatelliteTemp — температура спутника.
 //
-// Основной вклад — нагрев от газового гиганта (внутренний + приливный).
-// Остаточный нагрев от звезды мал (спутники далеко от неё).
+// Спутник получает тепло из трёх источников:
+//  1. Остаточное излучение звезды (ослабленное, спутник в тени гиганта часть времени).
+//  2. Внутренний нагрев от газового гиганта (giantTemp × 0.3).
+//  3. Приливный нагрев (обратно пропорционален кубу орбитального индекса).
 //
-// Формула:
-//
-//	internal = giantTemp × 0.3                (внутреннее тепло гиганта)
-//	tidal    = 400 / orbitIndex³              (приливный нагрев)
-//	temp     = clamp(internal + tidal, 20, 1200)
+// ВАЖНО: спутник не может быть существенно горячее газового гиганта.
+// Максимум — на 50 K выше (за счёт приливного разогрева, как у Ио).
+// Это физически обоснованное ограничение: если гигант холодный,
+// спутник тоже не может быть раскалённым.
 func computeSatelliteTemp(giantTemp float64, orbitIndex int) float64 {
 	if orbitIndex < 1 {
 		orbitIndex = 1
 	}
 
+	// 1. Внутреннее тепло от гиганта
 	internal := giantTemp * 0.3
-	tidal := 400.0 / math.Pow(float64(orbitIndex), 3)
+
+	// 2. Приливный нагрев — скромный. Максимум ~100 K при orbitIndex=1.
+	//    Раньше было 400 — отсюда и был баг «спутник в 3 раза горячее гиганта».
+	tidal := 100.0 / math.Pow(float64(orbitIndex), 3)
 
 	temp := internal + tidal
 
+	// 3. Ограничение: не выше гиганта + 50 K
+	ceiling := giantTemp + 50
+	if temp > ceiling {
+		temp = ceiling
+	}
+
+	// 4. Абсолютный минимум и максимум
 	if temp < TempAbsoluteMin {
 		temp = TempAbsoluteMin
 	}
-	if temp > 1200 {
-		temp = 1200
+	if temp > TempAbsoluteMax {
+		temp = TempAbsoluteMax
 	}
 	return temp
 }
@@ -139,6 +151,15 @@ func generateSatelliteSurface(
 		c[SurfaceOceans] = c[SurfaceOceans] + 20
 	}
 
+	// Абсолютные запреты
+	if temp < 500 {
+		delete(c, SurfaceLavaFields)
+	}
+	if temp > 320 {
+		delete(c, SurfaceGlaciers)
+		delete(c, SurfaceFrozenGases)
+	}
+
 	// Рандом ±20%
 	for k, v := range c {
 		c[k] = v * (0.8 + rng.Float64()*0.4)
@@ -156,14 +177,14 @@ func generateSatelliteSubterrain(
 	rng *rand.Rand,
 ) Composition {
 	c := map[string]float64{
-		SubterrainEmptyRock:       30,
-		SubterrainMagmaticRocks:   15,
-		SubterrainOreVeins:        15,
-		SubterrainGroundIce:       0,
-		SubterrainGroundwater:     0,
-		SubterrainMagmaChambers:   0,
-		SubterrainMetalCores:      10,
-		SubterrainCrystalVeins:    10,
+		SubterrainEmptyRock:     30,
+		SubterrainMagmaticRocks: 15,
+		SubterrainOreVeins:      15,
+		SubterrainGroundIce:     0,
+		SubterrainGroundwater:   0,
+		SubterrainMagmaChambers: 0,
+		SubterrainMetalCores:    10,
+		SubterrainCrystalVeins:  10,
 	}
 
 	switch {
