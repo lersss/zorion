@@ -94,6 +94,9 @@ func checkNegativeShares(v *View) []audit.Issue {
 // ==================== КОМПОЗИЦИЯ vs ТЕМПЕРАТУРА ====================
 
 // checkFormMinTemp — универсальная проверка «форма при слишком низкой T».
+//
+// Формирует код на латинице: <formCode>_in_cold.
+// Для этого каждая форма имеет свой английский код (см. formCodes).
 func checkFormMinTemp(v *View, form string, minTemp float64) []audit.Issue {
 	share := v.Surface[form]
 	if share < 1 {
@@ -102,9 +105,30 @@ func checkFormMinTemp(v *View, form string, minTemp float64) []audit.Issue {
 	if v.Temperature >= minTemp {
 		return nil
 	}
-	return []audit.Issue{newIssueWithDetails(v, form+"_in_cold", audit.SeverityHigh,
+	code := formCode(form) + "_in_cold"
+	return []audit.Issue{newIssueWithDetails(v, code, audit.SeverityHigh,
 		fmt.Sprintf("%s %.1f%% при температуре %.0f K (минимум %.0f K)", form, share, v.Temperature, minTemp),
 		map[string]interface{}{"form": form, "share": share, "temperature": v.Temperature, "min_temp": minTemp})}
+}
+
+// formCode — английский код для формы поверхности (для кодов аудита).
+var formCodes = map[string]string{
+	"джунгли":         "jungles",
+	"леса":            "forests",
+	"луга_степи":      "meadows",
+	"болота":          "swamps",
+	"коралловые_рифы": "coral_reefs",
+	"ледники":         "glaciers",
+	"мёрзлые_газы":    "frozen_gases",
+	"лавовые_поля":    "lava",
+	"океаны":          "oceans",
+}
+
+func formCode(form string) string {
+	if code, ok := formCodes[form]; ok {
+		return code
+	}
+	return form
 }
 
 // checkJunglesInCold — джунгли при низкой температуре.
@@ -317,7 +341,7 @@ func checkSatelliteTemperature(v *View) []audit.Issue {
 	}
 	var issues []audit.Issue
 	for _, s := range v.Satellites {
-		if s.Temperature > v.Temperature+10 {
+		if s.Temperature > v.Temperature+50 {
 			issues = append(issues, newIssueWithDetails(v, "satellite_hotter_than_giant", audit.SeverityMedium,
 				fmt.Sprintf("Спутник %s (%.0f K) горячее газового гиганта (%.0f K)", s.Name, s.Temperature, v.Temperature),
 				map[string]interface{}{"satellite_name": s.Name, "satellite_temp": s.Temperature, "giant_temp": v.Temperature}))
