@@ -14,19 +14,17 @@ type PlanetStats struct {
 	PlanetsByType     map[string]int           `json:"planets_by_type"`
 	PlanetsBySpectral map[string]map[string]int `json:"planets_by_spectral"`
 	GameDesignTypes   map[string]int           `json:"game_design_types"`
-	// Новые категории
-	HydrosphereCount map[string]int `json:"hydrosphere_count"`
-	AtmosphereCount  map[string]int `json:"atmosphere_count"`
-	BiosphereCount   map[string]int `json:"biosphere_count"`
-	ClimateCount     map[string]int `json:"climate_count"`
-	HabitableCount   int            `json:"habitable_count"`
-	LifeCount        int            `json:"life_count"`
-	AvgSize          float64        `json:"avg_size"`
-	AvgMass          float64        `json:"avg_mass"`
-	AvgTemp          float64        `json:"avg_temp"`
-	AvgWater         float64        `json:"avg_water"`
-	AvgPopulation    int64          `json:"avg_population"`
-	Anomalies        []Anomaly      `json:"anomalies"`
+	HydrosphereCount  map[string]int           `json:"hydrosphereCount"`
+	AtmosphereCount   map[string]int           `json:"atmosphereCount"`
+	BiosphereCount    map[string]int           `json:"biosphereCount"`
+	HabitableCount    int                      `json:"habitable_count"`
+	LifeCount         int                      `json:"life_count"`
+	AvgSize           float64                  `json:"avg_size"`
+	AvgMass           float64                  `json:"avg_mass"`
+	AvgTemp           float64                  `json:"avg_temp"`
+	AvgWater          float64                  `json:"avg_water"`
+	AvgPopulation     int64                    `json:"avg_population"`
+	Anomalies         []Anomaly                `json:"anomalies"`
 }
 
 type Anomaly struct {
@@ -34,7 +32,7 @@ type Anomaly struct {
 	Description string  `json:"description"`
 	Value       float64 `json:"value"`
 	Expected    float64 `json:"expected"`
-	Severity    string  `json:"severity"` // low, medium, high
+	Severity    string  `json:"severity"`
 }
 
 func (h *AdminHandlers) GetPlanetStatsHandler(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +54,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		HydrosphereCount:   make(map[string]int),
 		AtmosphereCount:    make(map[string]int),
 		BiosphereCount:     make(map[string]int),
-		ClimateCount:       make(map[string]int),
 		Anomalies:          []Anomaly{},
 	}
 
@@ -126,7 +123,7 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	for _, p := range planets {
 		worldsWithPlanets[p.WorldID] = true
 
-		// --- Тип поверхности (type) ---
+		// --- Поверхность ---
 		pType := getString(p.Data, "type")
 		if pType != "" {
 			stats.PlanetsByType[pType]++
@@ -146,35 +143,31 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		}
 
 		// --- Гидросфера ---
-		if hydro := getString(p.Data, "hydrosphere"); hydro != "" {
+		hydro := getString(p.Data, "hydrosphere")
+		if hydro != "" {
 			stats.HydrosphereCount[hydro]++
 		}
 
 		// --- Атмосфера ---
-		if atmo := getString(p.Data, "atmosphere"); atmo != "" {
+		atmo := getString(p.Data, "atmosphere")
+		if atmo != "" {
 			stats.AtmosphereCount[atmo]++
 		}
 
 		// --- Биосфера ---
-		if bio := getString(p.Data, "biosphere"); bio != "" {
+		bio := getString(p.Data, "biosphere")
+		if bio != "" {
 			stats.BiosphereCount[bio]++
 		}
 
-		// --- Климат (если есть) ---
-		// У нас нет отдельного поля "climate", но можно вычислить по температуре
-		// или использовать поле "climate_id", если оно есть.
-		// Для простоты пока пропускаем.
-
 		// --- Геймдизайнерский тип ---
 		surface := pType
-		hydrosphere := getString(p.Data, "hydrosphere")
-		atmosphere := getString(p.Data, "atmosphere")
 		temperature := getFloat(p.Data, "temperature")
 		waterPercent := getFloat(p.Data, "water_percent")
 		habitable := getBool(p.Data, "habitable")
 		life := getBool(p.Data, "life")
 
-		gdType := classifyGameDesignType(surface, hydrosphere, atmosphere, temperature, waterPercent, habitable, life, p.Data)
+		gdType := classifyGameDesignType(surface, hydro, atmo, temperature, waterPercent, habitable, life, p.Data)
 		stats.GameDesignTypes[gdType]++
 
 		if life {
@@ -223,9 +216,9 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		stats.AvgPopulation = totalPopulation / int64(popCount)
 	}
 
-	// Аномалии
+	// --- Аномалии ---
 	noPlanets := stats.TotalWorlds - stats.WorldsWithPlanets
-	if float64(noPlanets)/float64(stats.TotalWorlds) > 0.5 {
+	if stats.TotalWorlds > 0 && float64(noPlanets)/float64(stats.TotalWorlds) > 0.5 {
 		stats.Anomalies = append(stats.Anomalies, Anomaly{
 			Type:        "world",
 			Description: "Слишком много миров без планет",
@@ -236,14 +229,14 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	}
 
 	expectedTypes := map[string]float64{
-		"землеподобная":   0.2,
-		"пустынная":       0.15,
-		"ледяная":         0.15,
-		"газовый гигант":  0.15,
-		"океаническая":    0.1,
-		"вулканическая":   0.1,
-		"скалистая":       0.1,
-		"радиоактивная":   0.02,
+		"землеподобная":  0.2,
+		"пустынная":      0.15,
+		"ледяная":        0.15,
+		"газовый гигант": 0.15,
+		"океаническая":   0.1,
+		"вулканическая":  0.1,
+		"скалистая":      0.1,
+		"радиоактивная":  0.02,
 	}
 	if stats.TotalPlanets > 0 {
 		for gdType, count := range stats.GameDesignTypes {
