@@ -8,23 +8,23 @@ import (
 )
 
 type PlanetStats struct {
-	TotalWorlds       int                      `json:"total_worlds"`
-	WorldsWithPlanets int                      `json:"worlds_with_planets"`
-	TotalPlanets      int                      `json:"total_planets"`
-	PlanetsByType     map[string]int           `json:"planets_by_type"`
+	TotalWorlds       int                       `json:"total_worlds"`
+	WorldsWithPlanets int                       `json:"worlds_with_planets"`
+	TotalPlanets      int                       `json:"total_planets"`
+	PlanetsByType     map[string]int            `json:"planets_by_type"`
 	PlanetsBySpectral map[string]map[string]int `json:"planets_by_spectral"`
-	GameDesignTypes   map[string]int           `json:"game_design_types"`
-	HydrosphereCount  map[string]int           `json:"hydrosphereCount"`
-	AtmosphereCount   map[string]int           `json:"atmosphereCount"`
-	BiosphereCount    map[string]int           `json:"biosphereCount"`
-	HabitableCount    int                      `json:"habitable_count"`
-	LifeCount         int                      `json:"life_count"`
-	AvgSize           float64                  `json:"avg_size"`
-	AvgMass           float64                  `json:"avg_mass"`
-	AvgTemp           float64                  `json:"avg_temp"`
-	AvgWater          float64                  `json:"avg_water"`
-	AvgPopulation     int64                    `json:"avg_population"`
-	Anomalies         []Anomaly                `json:"anomalies"`
+	GameDesignTypes   map[string]int            `json:"game_design_types"`
+	HydrosphereCount  map[string]int            `json:"hydrosphereCount"`
+	AtmosphereCount   map[string]int            `json:"atmosphereCount"`
+	BiosphereCount    map[string]int            `json:"biosphereCount"`
+	HabitableCount    int                       `json:"habitable_count"`
+	LifeCount         int                       `json:"life_count"`
+	AvgSize           float64                   `json:"avg_size"`
+	AvgMass           float64                   `json:"avg_mass"`
+	AvgTemp           float64                   `json:"avg_temp"`
+	AvgWater          float64                   `json:"avg_water"`
+	AvgPopulation     int64                     `json:"avg_population"`
+	Anomalies         []Anomaly                 `json:"anomalies"`
 }
 
 type Anomaly struct {
@@ -123,7 +123,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	for _, p := range planets {
 		worldsWithPlanets[p.WorldID] = true
 
-		// --- Поверхность ---
 		pType := getString(p.Data, "type")
 		if pType != "" {
 			stats.PlanetsByType[pType]++
@@ -142,25 +141,19 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 			}
 		}
 
-		// --- Гидросфера ---
 		hydro := getString(p.Data, "hydrosphere")
 		if hydro != "" {
 			stats.HydrosphereCount[hydro]++
 		}
-
-		// --- Атмосфера ---
 		atmo := getString(p.Data, "atmosphere")
 		if atmo != "" {
 			stats.AtmosphereCount[atmo]++
 		}
-
-		// --- Биосфера ---
 		bio := getString(p.Data, "biosphere")
 		if bio != "" {
 			stats.BiosphereCount[bio]++
 		}
 
-		// --- Геймдизайнерский тип ---
 		surface := pType
 		temperature := getFloat(p.Data, "temperature")
 		waterPercent := getFloat(p.Data, "water_percent")
@@ -216,7 +209,6 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		stats.AvgPopulation = totalPopulation / int64(popCount)
 	}
 
-	// --- Аномалии ---
 	noPlanets := stats.TotalWorlds - stats.WorldsWithPlanets
 	if stats.TotalWorlds > 0 && float64(noPlanets)/float64(stats.TotalWorlds) > 0.5 {
 		stats.Anomalies = append(stats.Anomalies, Anomaly{
@@ -228,6 +220,8 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 		})
 	}
 
+	// expectedTypes намеренно НЕ содержит "не определена" —
+	// чтобы не генерировать аномалию до того, как мы решим, что с ней делать.
 	expectedTypes := map[string]float64{
 		"землеподобная":  0.2,
 		"пустынная":      0.15,
@@ -289,6 +283,7 @@ func getBool(data map[string]interface{}, key string) bool {
 }
 
 func classifyGameDesignType(surface, hydrosphere, atmosphere string, temperature, waterPercent float64, habitable, life bool, data map[string]interface{}) string {
+	// Радиоактивная
 	if radioactive, ok := data["radioactive"].(bool); ok && radioactive {
 		return "радиоактивная"
 	}
@@ -300,32 +295,52 @@ func classifyGameDesignType(surface, hydrosphere, atmosphere string, temperature
 		}
 	}
 
+	// Газовый гигант
 	if surface == "газовый гигант" {
 		return "газовый гигант"
 	}
+
+	// Вулканическая
 	if surface == "вулканическая" || surface == "лавовая" {
 		return "вулканическая"
 	}
+
+	// Ледяная
 	if surface == "ледяная" || temperature < 200 {
 		return "ледяная"
 	}
+
+	// Пустынная
 	if surface == "пустынная" || (surface == "песчаная" && waterPercent < 20) {
 		return "пустынная"
 	}
+
+	// Океаническая
 	if (surface == "песчаная" || surface == "глинистая") && hydrosphere == "океаны" {
 		return "океаническая"
 	}
+
+	// Землеподобная
 	if surface == "скалистая" && hydrosphere == "океаны" && habitable {
 		return "землеподобная"
 	}
+
+	// Реголитовая
 	if surface == "реголитовая" {
 		return "реголитовая"
 	}
+
+	// Органик
 	if surface == "органик" {
 		return "органик"
 	}
+
+	// Металлическая
 	if surface == "металлическая" {
 		return "металлическая"
 	}
-	return "скалистая"
+
+	// Всё, что не подошло, попадает сюда. Позже мы разберём эту категорию
+	// и придумаем для неё корректные типы.
+	return "не определена"
 }
