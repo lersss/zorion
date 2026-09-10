@@ -74,15 +74,31 @@
 - Фикс бага с ключом `surface:` в `generateRadioactivePlanet` — заменено
   на явную переменную `dominantSurface`.
 
+**Админка — очистка вселенной**
+- `internal/handlers/admin_universe.go` — `ClearUniverse` и `GenerateUniverse`
+  используют общую функцию `clearUniverseTx`. Подход: `UPDATE users SET current_world_id = NULL`
+  → снятие FK у users → `TRUNCATE` без CASCADE по явному списку таблиц → возврат FK.
+  Всё в одной транзакции.
+
 ### Исправлено
 
 - **JWT-секрет — хардкод `your-secret-key`** → env. Критично, было в публичном репозитории.
 - **`GetWorld` 500 при несуществующих locations/assignments** → устойчивость.
 - **`column "type" does not exist`** в `assignmentRepo.GetByWorld` → миграция `000010`.
-- **`concurrent map writes`** — не в этой сессии, но фикс в `planet_image.go`
-  (`sync.Mutex` на `cache`/`cacheOrder`/`rand`).
+- **`ClearUniverse` (кнопка в админке) падала с `upstream request timeout`**
+  на 100k миров. Причина: `DELETE FROM worlds` — долго, Amvera-прокси рвал соединение.
+  Первая попытка фикса — `TRUNCATE ... CASCADE` — **привела к потере таблицы `users`**
+  (CASCADE работает на уровне таблиц, не строк; `ON DELETE SET NULL` не учитывается).
+  Итоговый фикс: `TRUNCATE` без CASCADE + явный список зависимых таблиц
+  + временное снятие FK у `users`. Всё в транзакции, работает мгновенно,
+  `users` не трогает. Файл: `internal/handlers/admin_universe.go`, `clearUniverseTx`.
 - **`superfluous response.WriteHeader call`** в `filter_worlds_handler.go` —
   убран `http.Error` после начала записи ответа.
+- **`.env` был в публичном репозитории.** Содержал локальный дев-конфиг
+  (`127.0.0.1`, `zorion123`, `admin123`), не прод-секреты. Удалён из индекса,
+  добавлен в `.gitignore`. В истории git остаётся — приемлемо.
+- **`concurrent map writes`** — не в этой сессии, но фикс в `planet_image.go`
+  (`sync.Mutex` на `cache`/`cacheOrder`/`rand`).
 
 ### Удалено
 
@@ -90,6 +106,12 @@
   больше не вызывается. **Восстановлен** после ошибочного удаления: файл содержит
   функцию `clamp`, нужную `physics.go`. `generateDescription` в нём — мёртвый код,
   пусть лежит.
+
+**Документация:**
+- `docs/CONTEXT.md` — заменён на `STATUS.md` + `docs/ARCHITECTURE.md`.
+- `docs/readme.gamedev` — устаревший сводный GDD, дубликат `docs/gamedesign/`.
+- `faq_gamedesign.md` — устаревший FAQ, дубликат GDD.
+- `docs/PROMPT.md` — перемещён в корень как `PROMPT.md`.
 
 ### В планах
 

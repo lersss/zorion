@@ -112,6 +112,7 @@ docs/gamedesign/                         — GDD (9 файлов)
 | HTTP-хендлеры | `internal/handlers/` |
 | Фильтр миров для карты | `internal/handlers/filter_worlds_handler.go` |
 | Мир по ID | `internal/handlers/world_handlers.go` |
+| Очистка вселенной | `internal/handlers/admin_universe.go` |
 | Модели | `internal/models/` |
 | Репозитории | `internal/repository/` |
 | JWT | `internal/auth/jwt.go`, `internal/auth/middleware.go` |
@@ -161,6 +162,33 @@ docs/gamedesign/                         — GDD (9 файлов)
 
 Список применённых миграций — в `STATUS.md` (раздел «Схема БД»).
 
+### 4.1. Очистка таблиц с FK — только TRUNCATE без CASCADE
+
+**Правило:** при массовой очистке таблиц, на которые ссылаются другие таблицы,
+использовать `TRUNCATE` **без** `CASCADE` + явно перечислять все зависимые таблицы.
+
+**Почему:** `TRUNCATE ... CASCADE` работает на уровне **таблиц**, а не строк.
+Правило `ON DELETE SET NULL` / `ON DELETE CASCADE` у FK **не применяется** —
+если таблица формально ссылается на очищаемую, она попадает в CASCADE целиком,
+независимо от содержимого.
+
+**Пример из проекта (`ClearUniverse`):**
+- На `worlds` ссылаются `locations`, `assignments`, `planets` (прямо)
+  и ещё 7 таблиц косвенно (через `locations` и `planets`).
+- На `worlds` также ссылается `users` (через `current_world_id`),
+  но её **нельзя** удалять.
+- `TRUNCATE worlds CASCADE` снёс бы `users` целиком — что и случилось.
+- Итоговый подход: `UPDATE users SET current_world_id = NULL`
+  → `ALTER TABLE users DROP CONSTRAINT ...`
+  → `TRUNCATE worlds, locations, planets, ...` (без CASCADE)
+  → `ALTER TABLE users ADD CONSTRAINT ...` — всё в транзакции.
+
+**Файл:** `internal/handlers/admin_universe.go`, функция `clearUniverseTx`.
+
+**Если появится новая таблица с FK на любую из очищаемых** — `TRUNCATE`
+упадёт с ошибкой `cannot truncate a table referenced in a foreign key constraint`.
+Тогда добавь её в константу `truncateTables`.
+
 ---
 
 ## 5. Фронтенд — структура карты
@@ -186,6 +214,11 @@ web/static/js/
 - Сервер делает `GROUP BY` по ячейкам, отдаёт 100–5000 кластеров.
 - Клиент рисует кружки с числами (кластеры) и звёзды (одиночные миры).
 - При zoom/pan — debounced перезапрос (180 мс).
+
+**Известная коллизия имён:** `web/static/js/config.js` и `web/static/js/map/config.js`.
+Правило «имена файлов в разных папках не должны совпадать» зафиксировано
+в `PROMPT.md`, но на фронте пока не применено. TODO: переименовать `map/config.js`
+в `map/state.js`.
 
 ---
 
