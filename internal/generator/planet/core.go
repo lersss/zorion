@@ -17,22 +17,30 @@ type Core struct {
 // ==================== ТИПЫ ЯДРА ====================
 
 const (
-	CoreMetallic  = "металлическое"
-	CoreSilicate  = "силикатное"
-	CoreIce       = "ледяное"
-	CoreExotic    = "экзотическое"
+	CoreMetallic = "металлическое"
+	CoreSilicate = "силикатное"
+	CoreIce      = "ледяное"
+	CoreExotic   = "экзотическое"
+)
+
+// ==================== ПОРОГИ МАССЫ ====================
+
+// Пороги подобраны под реальные диапазоны:
+//   - Земля: mass=1, металлическое ядро, 32% массы
+//   - Венера: mass=0.8, металлическое ядро, 31%
+//   - Марс: mass=0.1, силикатное ядро, 25%
+//   - Луна: mass=0.012, силикатное/ледяное, 1–5%
+//   - Суперземля: mass=5, металлическое ядро
+//   - Газовый гигант: mass>30, металлическое ядро, но малое % от общей массы
+const (
+	massGasGiant   = 5.0 // выше — почти всегда металлическое
+	massEarthlike  = 0.5 // выше — металлическое с шансом 60%
+	massSmall      = 0.5 // ниже — силикатное/ледяное
 )
 
 // ==================== ГЕНЕРАЦИЯ ====================
 
 // GenerateCore — создаёт ядро для планеты.
-//
-// Параметры:
-//   - mass         — масса планеты (в земных)
-//   - climate      — климат из архетипа ("hot", "temperate", ...)
-//   - subterrain   — композиция недр (для связи с радиоактивностью и магмой)
-//   - systemAge    — возраст системы (млрд лет, один на мир)
-//   - rng          — источник случайности
 func GenerateCore(
 	mass float64,
 	climate string,
@@ -55,22 +63,33 @@ func GenerateCore(
 }
 
 // determineCoreType — тип ядра по массе.
+//
+// Целевое распределение:
+//   - металлическое ~55%
+//   - силикатное ~30%
+//   - ледяное ~12%
+//   - экзотическое ~3%
 func determineCoreType(mass float64, rng *rand.Rand) string {
 	switch {
-	case mass > 10:
-		// Газовые гиганты и суперземли — всегда металлическое
-		return CoreMetallic
-	case mass > 1:
-		// Землеподобные: металлическое или силикатное
-		if rng.Float64() < 0.7 {
+	case mass > massGasGiant:
+		// Суперземли и газовые гиганты — почти всегда металлическое ядро
+		if rng.Float64() < 0.95 {
 			return CoreMetallic
 		}
 		return CoreSilicate
+
+	case mass > massEarthlike:
+		// Землеподобные: металлическое или силикатное
+		if rng.Float64() < 0.6 {
+			return CoreMetallic
+		}
+		return CoreSilicate
+
 	default:
-		// Малые планеты: силикатное, ледяное, редко экзотика
+		// Малые планеты: силикатное / ледяное / редко экзотика
 		r := rng.Float64()
 		switch {
-		case r < 0.5:
+		case r < 0.55:
 			return CoreSilicate
 		case r < 0.9:
 			return CoreIce
@@ -81,14 +100,16 @@ func determineCoreType(mass float64, rng *rand.Rand) string {
 }
 
 // determineCoreMassPercent — доля ядра от массы планеты.
+//
+// Земля: 32%, Венера: 31%, Марс: 25%, Луна: 1–5%.
 func determineCoreMassPercent(mass float64, rng *rand.Rand) float64 {
 	switch {
-	case mass > 10:
-		return 30 + rng.Float64()*30 // 30–60%
-	case mass > 1:
-		return 15 + rng.Float64()*20 // 15–35%
+	case mass > massGasGiant:
+		return 20 + rng.Float64()*20 // 20–40% (газовые гиганты)
+	case mass > massEarthlike:
+		return 25 + rng.Float64()*15 // 25–40% (Земля 32%)
 	default:
-		return 5 + rng.Float64()*15 // 5–20%
+		return 5 + rng.Float64()*20 // 5–25% (малые планеты)
 	}
 }
 
@@ -97,38 +118,31 @@ func determineCoreMassPercent(mass float64, rng *rand.Rand) float64 {
 // Зависит от:
 //   - климата (hot/extreme → активнее);
 //   - доли магматических камер в недрах;
-//   - доли лавовых/вулканических полей (через композицию недр).
+//   - доли магматических пород.
 func determineCoreActivity(
 	climate string,
 	subterrain Composition,
 	rng *rand.Rand,
 ) float64 {
-	// База по климату
 	var base float64
 	switch climate {
 	case "extreme":
-		base = 70 + rng.Float64()*30 // 70–100
+		base = 70 + rng.Float64()*30
 	case "hot":
-		base = 40 + rng.Float64()*30 // 40–70
+		base = 40 + rng.Float64()*30
 	case "temperate":
-		base = 30 + rng.Float64()*30 // 30–60
+		base = 30 + rng.Float64()*30
 	case "variable":
-		base = 20 + rng.Float64()*30 // 20–50
+		base = 20 + rng.Float64()*30
 	case "cold":
-		base = 5 + rng.Float64()*20 // 5–25
+		base = 5 + rng.Float64()*20
 	default:
 		base = 20 + rng.Float64()*30
 	}
 
-	// Бонус за магматические камеры
-	magmaShare := subterrain.ShareOf(SubterrainMagmaChambers)
-	base += magmaShare * 1.5
+	base += subterrain.ShareOf(SubterrainMagmaChambers) * 1.5
+	base += subterrain.ShareOf(SubterrainMagmaticRocks) * 0.5
 
-	// Бонус за магматические породы
-	magmaticShare := subterrain.ShareOf(SubterrainMagmaticRocks)
-	base += magmaticShare * 0.5
-
-	// Ограничение
 	if base > 100 {
 		base = 100
 	}
@@ -143,9 +157,7 @@ func determineCoreActivity(
 // Прямо связана с долей радиоактивных зон в недрах.
 func determineCoreRadioactivity(subterrain Composition, rng *rand.Rand) float64 {
 	share := subterrain.ShareOf(SubterrainRadioactiveZones)
-
-	// Линейная связь: 0% → 0–10, 15% → 70–100
-	base := share * 6.0 // 15% → 90
+	base := share * 6.0
 	base += rng.Float64() * 10
 
 	if base > 100 {
@@ -163,10 +175,10 @@ func determineCoreRadioactivity(subterrain Composition, rng *rand.Rand) float64 
 //
 // Формула:
 //
-//	base_heat = Activity * 1.5 + Radioactivity * 2.5   (0–400 K)
+//	base_heat = Activity × 1.5 + Radioactivity × 2.5   (0–400 K)
 //	age_factor = max(0.15, 1.0 - Age/15)               (старение)
 //	mass_factor = MassPercent / 30                     (масштаб ядра)
-//	contribution = base_heat * age_factor * mass_factor
+//	contribution = base_heat × age_factor × mass_factor
 func (c Core) HeatContribution() float64 {
 	baseHeat := c.Activity*1.5 + c.Radioactivity*2.5
 
@@ -189,12 +201,12 @@ func (c Core) HeatContribution() float64 {
 
 // ==================== ФЛАГИ ====================
 
-// IsMetallic — металлическое ли ядро (для UI, фильтров, магнитного поля).
+// IsMetallic — металлическое ли ядро.
 func (c Core) IsMetallic() bool {
 	return c.Type == CoreMetallic
 }
 
-// IsActive — активное ли ядро (для магнитного поля, вулканизма).
+// IsActive — активное ли ядро (для магнитного поля).
 // Порог 40 — эмпирический: Земля ~70, Марс ~20.
 func (c Core) IsActive() bool {
 	return c.Activity > 40

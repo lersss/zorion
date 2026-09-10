@@ -36,7 +36,9 @@
       "temperature_min": 300,
       "temperature_max": 600,
       "water_chance": 0.2,
-      "life_chance": 0.1
+      "life_chance": 0.1,
+      "mass_min": 0.1,
+      "mass_max": 5.0
     },
     {
       "id": "temperate",
@@ -77,7 +79,9 @@
       "temperature_min": 220,
       "temperature_max": 350,
       "water_chance": 0.7,
-      "life_chance": 0.7
+      "life_chance": 0.7,
+      "mass_min": 0.2,
+      "mass_max": 3.0
     },
     {
       "id": "cold",
@@ -112,7 +116,9 @@
       "temperature_min": 50,
       "temperature_max": 200,
       "water_chance": 0.3,
-      "life_chance": 0.05
+      "life_chance": 0.05,
+      "mass_min": 0.1,
+      "mass_max": 3.0
     },
     {
       "id": "extreme",
@@ -148,7 +154,9 @@
       "temperature_min": 500,
       "temperature_max": 900,
       "water_chance": 0.0,
-      "life_chance": 0.0
+      "life_chance": 0.0,
+      "mass_min": 0.3,
+      "mass_max": 8.0
     },
     {
       "id": "variable",
@@ -185,7 +193,9 @@
       "temperature_min": 150,
       "temperature_max": 400,
       "water_chance": 0.5,
-      "life_chance": 0.4
+      "life_chance": 0.4,
+      "mass_min": 0.2,
+      "mass_max": 4.0
     }
   ]
 }
