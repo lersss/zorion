@@ -55,6 +55,13 @@ func main() {
 		log.Println("✅ Архетипы планет загружены")
 	}
 
+	// Загрузка матрицы совместимости форм/типов
+	if err := planet.LoadCompatibilityMatrix("config/compatibility_defaults.json"); err != nil {
+		log.Printf("⚠️ Не удалось загрузить матрицу совместимости: %v, использую встроенные дефолты", err)
+	} else {
+		log.Println("✅ Матрица совместимости загружена")
+	}
+
 	worldRepo := repository.NewWorldRepository(db)
 	locationRepo := repository.NewLocationRepository(db)
 	assignmentRepo := repository.NewAssignmentRepository(db)
@@ -107,7 +114,7 @@ func main() {
 	http.HandleFunc("/admin/worlds/create", auth.AdminAuth(adminHandlers.CreateWorld))
 	http.HandleFunc("/admin/generate", auth.AdminAuth(adminHandlers.GenerateUniverse))
 	http.HandleFunc("/admin/stats", auth.AdminAuth(adminHandlers.GetStats))
-	http.HandleFunc("/admin/stats/planets", auth.AdminAuth(adminHandlers.GetPlanetStatsHandler)) // <-- новый маршрут
+	http.HandleFunc("/admin/stats/planets", auth.AdminAuth(adminHandlers.GetPlanetStatsHandler))
 	http.HandleFunc("/admin/generate-status", auth.AdminAuth(adminHandlers.GenerateStatus))
 	http.HandleFunc("/admin/clear", auth.AdminAuth(adminHandlers.ClearUniverse))
 	http.HandleFunc("/admin/generate-planets", auth.AdminAuth(adminHandlers.GeneratePlanets))
