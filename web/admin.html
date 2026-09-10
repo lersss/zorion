@@ -14,6 +14,7 @@
     <div class="admin-tabs">
         <button class="tab-btn active" data-tab="tab-main">Основное</button>
         <button class="tab-btn" data-tab="tab-stats">📊 Статистика</button>
+        <button class="tab-btn" data-tab="tab-audit">🔍 Аудит</button>
         <button class="tab-btn" data-tab="tab-worlds">🌍 Миры</button>
     </div>
 
@@ -113,6 +114,24 @@
             <button class="btn" onclick="loadPlanetStats()">🔄 Обновить</button>
             <div id="planetStatsContainer">
                 <p style="color:#94a3b8; margin-top:10px;">Нажмите «Обновить» для загрузки статистики.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Вкладка: Аудит -->
+    <div id="tab-audit" class="tab-pane">
+        <div class="card">
+            <h2>🔍 Аудит планет</h2>
+            <p style="color:#94a3b8; font-size:0.85rem; margin-top:-6px;">
+                Проверка всех планет на физические и логические противоречия.
+                Занимает несколько секунд. Результат — список найденных проблем
+                с указанием планеты, кода и описания.
+            </p>
+            <div class="compact-row" style="margin-top:10px;">
+                <button class="btn success" id="runAuditBtn">▶ Запустить аудит</button>
+            </div>
+            <div id="audit-content" style="margin-top:16px;">
+                <p style="color:#94a3b8;">Нажмите «Запустить аудит» для проверки.</p>
             </div>
         </div>
     </div>
