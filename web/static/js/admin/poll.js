@@ -3,8 +3,50 @@ import { fetchWithAuth } from './auth.js';
 import { loadStats } from './stats.js';
 import { loadWorlds } from './worlds.js';
 
-let pollIntervals = {};
+export const pollIntervals = {};
 
 export async function pollJob(jobType, progressId, resultId, cancelBtnId) {
-    // ... (код из старого admin.js)
+    try {
+        const res = await fetchWithAuth(`/admin/generate-status?job=${jobType}`);
+        const data = await res.json();
+        const progress = data.processed || 0;
+        const total = data.total || 0;
+        const status = data.status || 'running';
+
+        const textEl = document.getElementById(progressId + 'Text');
+        const barEl = document.getElementById(progressId + 'Bar');
+        if (textEl) textEl.textContent = total > 0 ? `${progress} из ${total}` : 'Подготовка...';
+        if (barEl) {
+            const percent = total > 0 ? (progress / total * 100) : 0;
+            barEl.value = percent;
+        }
+
+        const cancelBtn = document.getElementById(cancelBtnId);
+        if (cancelBtn) {
+            cancelBtn.style.display = (status === 'running') ? 'inline-block' : 'none';
+        }
+
+        if (status === 'done' || status === 'error' || status === 'canceled') {
+            clearInterval(pollIntervals[jobType]);
+            delete pollIntervals[jobType];
+            document.getElementById(progressId).style.display = 'none';
+            if (cancelBtn) cancelBtn.style.display = 'none';
+            const resultEl = document.getElementById(resultId);
+            if (status === 'done') {
+                resultEl.textContent = `✅ Готово! (${total} объектов)`;
+                if (jobType === 'generate_universe') {
+                    loadStats();
+                    loadWorlds(1);
+                } else if (jobType === 'generate_planets') {
+                    loadStats();
+                }
+            } else if (status === 'canceled') {
+                resultEl.textContent = `⏹️ Остановлено пользователем`;
+            } else if (status === 'error') {
+                resultEl.textContent = `❌ Ошибка: ${data.error || 'неизвестная'}`;
+            }
+        }
+    } catch (e) {
+        console.error('Poll error:', e);
+    }
 }
