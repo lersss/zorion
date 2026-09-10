@@ -49,10 +49,6 @@ func determineSystemAge(spectralClass string, rng *rand.Rand) float64 {
 
 // gasGiantChance — шанс газового гиганта на дальней орбите
 // в зависимости от спектрального класса звезды.
-//
-// Физически у горячих звёзд (O, B, A) больше материала для формирования
-// гигантов. У холодных (K, M) тоже бывают, но реже (меньше материала
-// в протопланетном диске).
 func gasGiantChance(spectralClass string) float64 {
 	switch spectralClass {
 	case "O", "B", "A":
@@ -77,7 +73,6 @@ func (g *Generator) generatePlanet(
 	systemAge float64,
 ) *PlanetData {
 	// --- ГАЗОВЫЙ ГИГАНТ ---
-	// На дальних орбитах, шанс зависит от спектра.
 	if orbitIndex >= 3 {
 		if g.rng.Float64() < gasGiantChance(spectralClass) {
 			return g.generateGasGiant(worldID, orbitIndex, spectralClass, systemAge)
@@ -113,6 +108,17 @@ func (g *Generator) generatePlanet(
 		dominant = SurfaceRocks
 	}
 
+	// Геймдизайнерский тип по композиции
+	gdType := ClassifyGameDesignType(PlanetClassificationInput{
+		IsGasGiant:    false,
+		IsRadioactive: false,
+		Surface:       props.SurfaceComposition,
+		Temperature:   props.Temperature,
+		WaterPercent:  props.WaterPercent,
+		Habitable:     props.Habitable,
+		Life:          props.Life,
+	})
+
 	data := map[string]interface{}{
 		"size":              props.Size,
 		"mass":              props.Mass,
@@ -135,7 +141,7 @@ func (g *Generator) generatePlanet(
 		"surface_composition":    composeToJSON(props.SurfaceComposition),
 		"subterrain_composition": composeToJSON(props.SubterrainComposition),
 		"surface_dominant":       dominant,
-		"type":                   dominant,
+		"type":                   gdType, // ← геймдизайнерский тип
 		"core":                   coreToJSON(props.Core),
 
 		"description": generateDescription(g.rng, dominant, props.Habitable, props.Life),
@@ -231,7 +237,7 @@ func (g *Generator) generateOceanicPlanet(
 		"surface_composition":    composeToJSON(surfaceComp),
 		"subterrain_composition": composeToJSON(subterrainComp),
 		"surface_dominant":       SurfaceOceans,
-		"type":                   SurfaceOceans,
+		"type":                   TypeOceanic, // геймдизайнерский тип
 		"core":                   coreToJSON(core),
 		"description":            "Планета, почти полностью покрытая океаном. Богатая морская экосистема.",
 	}
@@ -323,7 +329,7 @@ func (g *Generator) generateRadioactivePlanet(
 		"surface_composition":    composeToJSON(surfaceComp),
 		"subterrain_composition": composeToJSON(subterrainComp),
 		"surface_dominant":       surface,
-		"type":                   surface,
+		"type":                   TypeRadioactive, // геймдизайнерский тип
 		"core":                   coreToJSON(core),
 		"description":            "Планета с высоким радиационным фоном, богатая редкими элементами.",
 	}
