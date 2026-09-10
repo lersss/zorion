@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,7 +18,6 @@ import (
 
 var statusManager = generator.NewStatusManager()
 
-// recoverErr — безопасно превращает результат recover() в строку.
 func recoverErr(r interface{}) string {
 	if r == nil {
 		return ""
@@ -34,29 +34,45 @@ func recoverErr(r interface{}) string {
 // ==================== ОБЩАЯ ОЧИСТКА ====================
 //
 // ВАЖНО: TRUNCATE ... CASCADE снёс бы users (у неё FK на worlds).
-// Поэтому используем TRUNCATE без CASCADE с явным списком таблиц,
+// Поэтому используем TRUNCATE без CASCADE + явный список таблиц,
 // а FK у users на время операции снимаем и возвращаем назад.
 //
 // Список таблиц — все, что прямо или косвенно ссылаются на worlds
 // (кроме users):
-//   worlds ← locations, assignments, planets
+//   worlds    ← locations, assignments, planets
 //   locations ← production_units
-//   planets ← factions, settlements, factories, goods_batches,
-//             planet_resources, resources
+//   planets   ← factions, settlements, factories, goods_batches,
+//               planet_resources, resources
 //
-// Если в БД появится новая таблица с FK на любую из этих — TRUNCATE
-// упадёт с ошибкой "cannot truncate a table referenced in a foreign
-// key constraint". Тогда добавь её в этот список.
+// Если появится новая таблица с FK на любую из этих — TRUNCATE упадёт
+// с ошибкой "cannot truncate a table referenced in a foreign key
+// constraint". Тогда добавь её в этот список.
 
-const truncateTables = `worlds, locations, planets, assignments, production_units,
-	factions, settlements, factories, goods_batches, planet_resources, resources`
+const truncateTables = `worlds, locations, planets, assignments, production_units, factions, settlements, factories, goods_batches, planet_resources, resources`
 
-// clearUniverseInTx — очистка внутри уже начатой транзакции.
-// Вызывающий код сам открывает tx и делает Commit/Rollback.
-func clearUniverseInTx(ctx context.Context, tx interface {
-	ExecContext(context.Context, string, ...interface{}) (interface{}, error)
-}) error {
-	// Этот интерфейс не сработает — оставлен для примера. См. ниже.
+// clearUniverseTx — очистка внутри уже начатой транзакции.
+// Вызывающий делает Begin/Commit/Rollback.
+func clearUniverseTx(ctx context.Context, tx *sql.Tx) error {
+	// 1. Обнуляем current_world_id — чтобы после возврата FK не было висячих ссылок.
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET current_world_id = NULL WHERE current_world_id IS NOT NULL"); err != nil {
+		return fmt.Errorf("update users: %w", err)
+	}
+
+	// 2. Снимаем FK — временно.
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE users DROP CONSTRAINT IF EXISTS users_current_world_id_fkey"); err != nil {
+		return fmt.Errorf("drop fk: %w", err)
+	}
+
+	// 3. TRUNCATE без CASCADE. Все зависимые таблицы перечислены.
+	if _, err := tx.ExecContext(ctx, "TRUNCATE TABLE "+truncateTables); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+
+	// 4. Возвращаем FK на место.
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE users ADD CONSTRAINT users_current_world_id_fkey FOREIGN KEY (current_world_id) REFERENCES worlds(id) ON DELETE SET NULL"); err != nil {
+		return fmt.Errorf("re-add fk: %w", err)
+	}
+
 	return nil
 }
 
@@ -349,10 +365,8 @@ func (h *AdminHandlers) GenerateStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // ClearUniverse — удаляет все миры и связанные данные.
-//
 // Использует TRUNCATE без CASCADE + явный список таблиц.
 // FK от users снимается на время операции и возвращается назад.
-// Всё в одной транзакции: либо получилось, либо откатилось.
 func (h *AdminHandlers) ClearUniverse(w http.ResponseWriter, r *http.Request) {
 	if statusManager.IsRunning(generator.JobGenerateUniverse) ||
 		statusManager.IsRunning(generator.JobGeneratePlanets) {
@@ -395,26 +409,6 @@ func (h *AdminHandlers) ClearUniverse(w http.ResponseWriter, r *http.Request) {
 	log.Printf("✅ ClearUniverse: очищено за %v (users=%d)", time.Since(tStart).Round(time.Millisecond), usersAfter)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"cleared"}`))
-}
-
-// clearUniverseTx — очистка внутри уже начатой транзакции.
-// Вызывающий код сам делает Begin/Commit/Rollback.
-//
-// Шаги:
-//   1. Обнуляем current_world_id у users (чтобы после возврата FK
-//      не было висячих ссылок).
-//   2. Снимаем FK users_current_world_id_fkey — временно, на транзакцию.
-//      Без этого TRUNCATE не сработает, а с CASCADE снесёт users.
-//   3. TRUNCATE всех зависимых таблиц одним запросом, без CASCADE.
-//   4. Возвращаем FK на место.
-func clearUniverseTx(ctx context.Context, tx interface {
-	ExecContext(context.Context, string, ...interface{}) (interface {
-		LastInsertId() (int64, error)
-		RowsAffected() (int64, error)
-	}, error)
-}) error {
-	// Этот интерфейс не подходит — см. ниже перегрузку с *sql.Tx.
-	return nil
 }
 
 func (h *AdminHandlers) GetStats(w http.ResponseWriter, r *http.Request) {
