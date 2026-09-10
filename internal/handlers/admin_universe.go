@@ -228,7 +228,7 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(context.Background())
 	if !statusManager.TryStart(generator.JobGeneratePlanets, len(worlds), cancel) {
 		cancel()
 		http.Error(w, "Generation already running", http.StatusConflict)
@@ -260,13 +260,7 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 		planetGen := planet.NewGenerator(h.db, 0)
 
 		progressFn := func(processed int) {
-			// Проверяем отмену — если отменили, паникуем в горутине,
-			// чтобы выйти из цикла внутри GeneratePlanetsForWorlds.
-			// Проще: используем ctx.Done внутри генератора? Нет, у нас там свой
-			// цикл. Пока делаем так — раз в прогресс проверяем флаг:
-			// GeneratePlanetsForWorlds не знает про ctx, придётся проверять здесь.
-			// Простейший вариант — не отменять в середине батча (редкий случай).
-			_ = processed
+			statusManager.Progress(generator.JobGeneratePlanets, processed)
 		}
 
 		totalPlanets, err := planetGen.GeneratePlanetsForWorlds(worldInfos, 500, progressFn)
@@ -275,11 +269,6 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 			statusManager.Fail(generator.JobGeneratePlanets, err.Error())
 			return
 		}
-
-		// Обновляем прогресс в statusManager (processed = worlds).
-		// GeneratePlanetsForWorlds вернул количество планет, а не миров,
-		// поэтому здесь выставляем прогресс как «всё сделано».
-		statusManager.Progress(generator.JobGeneratePlanets, len(worldInfos))
 
 		elapsed := time.Since(tStart)
 		log.Printf("✅ GeneratePlanets: total = %d планет за %v (%.0f планет/сек)",
