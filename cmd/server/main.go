@@ -27,6 +27,13 @@ func main() {
 	log.Printf("🚀 Запуск сервера Zorion на порту %s", cfg.ServerPort)
 	log.Printf("⏱️  Интервал тика: %v", cfg.TickInterval)
 
+	// Инициализация JWT-секрета. Делаем это ДО подключения к БД,
+	// чтобы упасть как можно раньше, если секрет не задан или короткий.
+	if err := auth.InitJWTSecret(cfg.JWTSecret); err != nil {
+		log.Fatalf("❌ Не удалось инициализировать JWT-секрет: %v", err)
+	}
+	log.Println("✅ JWT-секрет инициализирован")
+
 	var err error
 	db, err = sql.Open("postgres", cfg.DBURL)
 	if err != nil {

@@ -1,3 +1,4 @@
+// internal/config/config.go
 package config
 
 import (
@@ -13,6 +14,7 @@ type Config struct {
 	RedisURL      string
 	TickInterval  time.Duration
 	AdminPassword string
+	JWTSecret     string
 }
 
 func Load() *Config {
@@ -46,11 +48,19 @@ func Load() *Config {
 		log.Println("⚠️ ADMIN_PASSWORD not set, using default: admin123")
 	}
 
+	// JWT_SECRET — обязательная переменная окружения.
+	// Без неё сервер не стартует: безопасность важнее удобства разработки.
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET not set — задайте переменную окружения (минимум 32 байта)")
+	}
+
 	return &Config{
 		ServerPort:    port,
 		DBURL:         dbURL,
 		RedisURL:      redisURL,
 		TickInterval:  time.Duration(sec) * time.Second,
 		AdminPassword: adminPassword,
+		JWTSecret:     jwtSecret,
 	}
 }
