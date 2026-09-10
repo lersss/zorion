@@ -9,6 +9,15 @@ import { openSystemModal } from './modal/index.js';
 import { worldToCanvas, isFiniteNumber } from './map/utils.js';
 import { draw } from './map/map_render.js';
 
+// --- Обработка 401/403: выход на логин ---
+function handleUnauthorized() {
+    localStorage.removeItem('token');
+    // Защита от зацикливания: если мы уже на логине — не редиректим
+    if (window.location.pathname !== '/login-page') {
+        window.location.href = '/login-page';
+    }
+}
+
 // --- Восстановление вьюпорта из sessionStorage ---
 function restoreViewport() {
     try {
@@ -28,8 +37,10 @@ function restoreViewport() {
 async function loadWorldsWithFilters(filters) {
     const token = localStorage.getItem('token');
     if (!token) {
-        throw new Error('No token');
+        handleUnauthorized();
+        throw new Error('Unauthorized');
     }
+
     let url = '/api/worlds/filter';
     if (filters) {
         const params = new URLSearchParams();
@@ -41,11 +52,18 @@ async function loadWorldsWithFilters(filters) {
         const query = params.toString();
         if (query) url += '?' + query;
     }
+
     const res = await fetch(url, {
         headers: { 'Authorization': 'Bearer ' + token }
     });
+
+    // Сессия истекла — на логин
+    if (res.status === 401 || res.status === 403) {
+        handleUnauthorized();
+        throw new Error('Unauthorized');
+    }
     if (!res.ok) {
-        throw new Error('Failed to fetch worlds');
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
     return res.json();
 }
@@ -55,9 +73,10 @@ async function loadAllData(filters, keepViewport = false) {
     const token = localStorage.getItem('token');
     if (!token) {
         console.warn('No token, redirect to login');
-        window.location.href = '/login-page';
+        handleUnauthorized();
         return;
     }
+
     elements.loading.style.display = 'block';
     elements.statusBar.textContent = '⏳ Загрузка данных...';
 
@@ -77,7 +96,6 @@ async function loadAllData(filters, keepViewport = false) {
             state.offsetY = savedOffsetY;
             state.scale = savedScale;
         } else {
-            // Если не нужно сохранять вьюпорт, либо центрируем, либо восстанавливаем из sessionStorage
             if (!restoreViewport()) {
                 if (state.currentWorldId) {
                     centerOnAgent();
@@ -99,11 +117,14 @@ async function loadAllData(filters, keepViewport = false) {
         elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
     } catch (err) {
         console.error('Load data error:', err);
-        elements.loading.textContent = '❌ Ошибка загрузки данных';
-        elements.statusBar.textContent = '❌ Ошибка';
-        if (err.message === 'No token') {
-            window.location.href = '/login-page';
+
+        // Если это 401/403 — уже сделали редирект, ничего не показываем
+        if (err.message === 'Unauthorized') {
+            return;
         }
+
+        elements.loading.textContent = '❌ Ошибка загрузки данных';
+        elements.statusBar.textContent = '❌ Ошибка: ' + err.message;
         throw err;
     }
 }
@@ -112,10 +133,17 @@ async function loadUserData() {
     try {
         const token = localStorage.getItem('token');
         if (!token) return;
+
         const res = await fetch('/me', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
+
+        if (res.status === 401 || res.status === 403) {
+            handleUnauthorized();
+            return;
+        }
         if (!res.ok) return;
+
         const user = await res.json();
         if (user.current_world_id) {
             state.currentWorldId = user.current_world_id;
@@ -184,6 +212,7 @@ function init() {
             document.getElementById('filter-habitable').checked = false;
             document.getElementById('filter-planet-type').value = '';
             document.getElementById('filter-resource').value = '';
+
             const spinner = document.getElementById('filter-spinner');
             const countEl = document.getElementById('filter-count');
             if (spinner) spinner.style.display = 'inline-block';
@@ -203,6 +232,8 @@ function init() {
 
     loadAllData(null, false).then(() => {
         animationLoop();
+    }).catch(() => {
+        // Ошибка уже обработана в loadAllData
     });
 }
 
