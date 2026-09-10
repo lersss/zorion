@@ -1,3 +1,4 @@
+// internal/repository/planet_repo.go
 package repository
 
 import (
@@ -5,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+
 	"zorion/internal/models"
 )
 
@@ -16,6 +18,8 @@ func NewPlanetRepository(db *sql.DB) *PlanetRepository {
 	return &PlanetRepository{db: db}
 }
 
+// GetPlanetsByWorldID — возвращает планеты мира с полной структурой,
+// включая композиции, ядро, спутники.
 func (r *PlanetRepository) GetPlanetsByWorldID(worldID string) ([]models.Planet, error) {
 	query := `
 		SELECT id, world_id, name, orbit_index, data, created_at, updated_at
@@ -33,48 +37,21 @@ func (r *PlanetRepository) GetPlanetsByWorldID(worldID string) ([]models.Planet,
 	for rows.Next() {
 		var p models.Planet
 		var dataJSON []byte
-		err := rows.Scan(&p.ID, &p.WorldID, &p.Name, &p.OrbitIndex, &dataJSON, &p.CreatedAt, &p.UpdatedAt)
+		err := rows.Scan(
+			&p.ID, &p.WorldID, &p.Name, &p.OrbitIndex,
+			&dataJSON, &p.CreatedAt, &p.UpdatedAt,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan planet: %w", err)
 		}
 
-		// --- ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ ---
 		var data map[string]interface{}
 		if err := json.Unmarshal(dataJSON, &data); err != nil {
-			log.Printf("❌ JSON unmarshal error for planet %s (world %s): %v", p.ID, p.WorldID, err)
-			log.Printf("   Raw JSON (first 200 chars): %s", string(dataJSON[:min(200, len(dataJSON))]))
+			log.Printf("❌ JSON unmarshal error for planet %s: %v", p.ID, err)
 			return nil, fmt.Errorf("failed to unmarshal planet data: %w", err)
 		}
-		// ------------------------------------
 
-		// Заполняем поля из JSON
-		if val, ok := data["type"].(string); ok {
-			p.Type = val
-		}
-		if val, ok := data["size"].(float64); ok {
-			p.Size = val
-		}
-		if val, ok := data["mass"].(float64); ok {
-			p.Mass = val
-		}
-		if val, ok := data["atmosphere"].(string); ok {
-			p.Atmosphere = val
-		}
-		if val, ok := data["temperature"].(float64); ok {
-			p.Temperature = val
-		}
-		if val, ok := data["water_percent"].(float64); ok {
-			p.WaterPercent = val
-		}
-		if val, ok := data["habitable"].(bool); ok {
-			p.Habitable = val
-		}
-		if val, ok := data["life"].(bool); ok {
-			p.Life = val
-		}
-		if val, ok := data["population"].(float64); ok {
-			p.Population = int64(val)
-		}
+		populatePlanetFromJSON(&p, data)
 		planets = append(planets, p)
 	}
 	if err = rows.Err(); err != nil {
@@ -83,10 +60,133 @@ func (r *PlanetRepository) GetPlanetsByWorldID(worldID string) ([]models.Planet,
 	return planets, nil
 }
 
-// вспомогательная функция min для безопасного обрезания строки
-func min(a, b int) int {
-	if a < b {
-		return a
+// ==================== ПАРСИНГ ====================
+
+// populatePlanetFromJSON — заполняет модель Planet из map JSON.
+func populatePlanetFromJSON(p *models.Planet, data map[string]interface{}) {
+	// Идентификация и типы
+	p.Type = getStr(data, "type")
+	p.SurfaceDominant = getStr(data, "surface_dominant")
+	p.Climate = getStr(data, "climate")
+
+	// Физика
+	p.Size = getFloat(data, "size")
+	p.Mass = getFloat(data, "mass")
+	p.Density = getFloat(data, "density")
+	p.Temperature = getFloat(data, "temperature")
+	p.WaterPercent = getFloat(data, "water_percent")
+
+	// Атмосфера и биосфера
+	p.Atmosphere = getStr(data, "atmosphere")
+	p.Hydrosphere = getStr(data, "hydrosphere")
+	p.Biosphere = getStr(data, "biosphere")
+
+	// Жизнь
+	p.Habitable = getBool(data, "habitable")
+	p.Life = getBool(data, "life")
+	p.Population = int64(getFloat(data, "population"))
+
+	// Композиции
+	p.SurfaceComposition = getFloatMap(data, "surface_composition")
+	p.SubterrainComposition = getFloatMap(data, "subterrain_composition")
+
+	// Ядро
+	p.Core = parseCore(data)
+
+	// Газовый гигант и спутники
+	p.IsGasGiant = getBool(data, "is_gas_giant")
+	p.Satellites = parseSatellites(data)
+
+	// Прочее
+	p.Description = getStr(data, "description")
+	p.SystemAge = getFloat(data, "system_age")
+	p.Moons = int(getFloat(data, "moons"))
+	p.Radioactive = getBool(data, "radioactive")
+}
+
+// parseCore — читает ядро из JSON.
+func parseCore(data map[string]interface{}) *models.PlanetCore {
+	raw, ok := data["core"].(map[string]interface{})
+	if !ok {
+		return nil
 	}
-	return b
+	return &models.PlanetCore{
+		Type:          getStr(raw, "type"),
+		MassPercent:   getFloat(raw, "mass_percent"),
+		Activity:      getFloat(raw, "activity"),
+		Radioactivity: getFloat(raw, "radioactivity"),
+		Age:           getFloat(raw, "age"),
+		IsActive:      getBool(raw, "is_active"),
+		IsMetallic:    getBool(raw, "is_metallic"),
+	}
+}
+
+// parseSatellites — читает спутники газового гиганта из JSON.
+func parseSatellites(data map[string]interface{}) []models.PlanetSatellite {
+	raw, ok := data["satellites"].([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]models.PlanetSatellite, 0, len(raw))
+	for _, item := range raw {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		result = append(result, models.PlanetSatellite{
+			ID:                    getStr(m, "id"),
+			Name:                  getStr(m, "name"),
+			OrbitIndex:            int(getFloat(m, "orbit_index")),
+			Size:                  getFloat(m, "size"),
+			Mass:                  getFloat(m, "mass"),
+			Temperature:           getFloat(m, "temperature"),
+			WaterPercent:          getFloat(m, "water_percent"),
+			Habitable:             getBool(m, "habitable"),
+			Life:                  getBool(m, "life"),
+			Atmosphere:            getStr(m, "atmosphere"),
+			Biosphere:             getStr(m, "biosphere"),
+			SurfaceDominant:       getStr(m, "surface_dominant"),
+			SurfaceComposition:    getFloatMap(m, "surface_composition"),
+			SubterrainComposition: getFloatMap(m, "subterrain_composition"),
+			Description:           getStr(m, "description"),
+		})
+	}
+	return result
+}
+
+// ==================== ХЕЛПЕРЫ ====================
+
+func getStr(data map[string]interface{}, key string) string {
+	if v, ok := data[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getFloat(data map[string]interface{}, key string) float64 {
+	if v, ok := data[key].(float64); ok {
+		return v
+	}
+	return 0
+}
+
+func getBool(data map[string]interface{}, key string) bool {
+	if v, ok := data[key].(bool); ok {
+		return v
+	}
+	return false
+}
+
+func getFloatMap(data map[string]interface{}, key string) map[string]float64 {
+	raw, ok := data[key].(map[string]interface{})
+	if !ok {
+		return map[string]float64{}
+	}
+	result := make(map[string]float64, len(raw))
+	for k, v := range raw {
+		if f, ok := v.(float64); ok {
+			result[k] = f
+		}
+	}
+	return result
 }
