@@ -15,19 +15,30 @@ type PlanetStats struct {
 	PlanetsByType     map[string]int            `json:"planets_by_type"`
 	PlanetsBySpectral map[string]map[string]int `json:"planets_by_spectral"`
 	GameDesignTypes   map[string]int            `json:"game_design_types"`
-	SurfaceFormCounts map[string]int            `json:"surface_form_counts"`
-	SubterrainCounts  map[string]int            `json:"subterrain_counts"`
-	HydrosphereCount  map[string]int            `json:"hydrosphereCount"`
-	AtmosphereCount   map[string]int            `json:"atmosphereCount"`
-	BiosphereCount    map[string]int            `json:"biosphereCount"`
-	HabitableCount    int                       `json:"habitable_count"`
-	LifeCount         int                       `json:"life_count"`
-	AvgSize           float64                   `json:"avg_size"`
-	AvgMass           float64                   `json:"avg_mass"`
-	AvgTemp           float64                   `json:"avg_temp"`
-	AvgWater          float64                   `json:"avg_water"`
-	AvgPopulation     int64                     `json:"avg_population"`
-	Anomalies         []Anomaly                 `json:"anomalies"`
+
+	// Поверхность: сколько планет содержит форму (count) и суммарная доля (share).
+	SurfaceFormCounts map[string]int     `json:"surface_form_counts"`
+	SurfaceFormShares map[string]float64 `json:"surface_form_shares"`
+	SurfaceFormAvg    map[string]float64 `json:"surface_form_avg"`
+
+	// Недра: аналогично.
+	SubterrainCounts map[string]int     `json:"subterrain_counts"`
+	SubterrainShares map[string]float64 `json:"subterrain_shares"`
+	SubterrainAvg    map[string]float64 `json:"subterrain_avg"`
+
+	HydrosphereCount map[string]int `json:"hydrosphereCount"`
+	AtmosphereCount  map[string]int `json:"atmosphereCount"`
+	BiosphereCount   map[string]int `json:"biosphereCount"`
+
+	HabitableCount int     `json:"habitable_count"`
+	LifeCount      int     `json:"life_count"`
+	AvgSize        float64 `json:"avg_size"`
+	AvgMass        float64 `json:"avg_mass"`
+	AvgTemp        float64 `json:"avg_temp"`
+	AvgWater       float64 `json:"avg_water"`
+	AvgPopulation  int64   `json:"avg_population"`
+
+	Anomalies []Anomaly `json:"anomalies"`
 }
 
 // Anomaly — отклонение от ожидаемого распределения.
@@ -70,6 +81,7 @@ func (h *AdminHandlers) calculatePlanetStats() (*PlanetStats, error) {
 	aggregator := newStatsAggregator(worlds)
 	aggregator.process(planets, stats)
 	aggregator.applyAverages(stats)
+	applyFormAverages(stats)
 
 	detectWorldAnomalies(stats)
 	detectTypeAnomalies(stats)
@@ -84,10 +96,32 @@ func newPlanetStats() *PlanetStats {
 		PlanetsBySpectral: make(map[string]map[string]int),
 		GameDesignTypes:   make(map[string]int),
 		SurfaceFormCounts: make(map[string]int),
+		SurfaceFormShares: make(map[string]float64),
+		SurfaceFormAvg:    make(map[string]float64),
 		SubterrainCounts:  make(map[string]int),
+		SubterrainShares:  make(map[string]float64),
+		SubterrainAvg:     make(map[string]float64),
 		HydrosphereCount:  make(map[string]int),
 		AtmosphereCount:   make(map[string]int),
 		BiosphereCount:    make(map[string]int),
 		Anomalies:         []Anomaly{},
+	}
+}
+
+// applyFormAverages — считает средний процент каждой формы по всем планетам.
+//
+// Средний % = сумма долей / TotalPlanets. Это то, что показываем в UI
+// как «в среднем X% поверхности галактики».
+func applyFormAverages(stats *PlanetStats) {
+	if stats.TotalPlanets == 0 {
+		return
+	}
+	total := float64(stats.TotalPlanets)
+
+	for form, share := range stats.SurfaceFormShares {
+		stats.SurfaceFormAvg[form] = share / total
+	}
+	for subType, share := range stats.SubterrainShares {
+		stats.SubterrainAvg[subType] = share / total
 	}
 }

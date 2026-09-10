@@ -66,16 +66,18 @@ func (a *statsAggregator) processOne(p planetRecord, stats *PlanetStats) {
 	incrementIfPresent(stats.AtmosphereCount, getString(p.Data, "atmosphere"))
 	incrementIfPresent(stats.BiosphereCount, getString(p.Data, "biosphere"))
 
-	// Композиция поверхности
+	// Композиция поверхности: count (наличие) + share (суммарный %)
 	surface := extractComposition(p.Data, "surface_composition")
-	for form := range surface {
+	for form, share := range surface {
 		stats.SurfaceFormCounts[form]++
+		stats.SurfaceFormShares[form] += share
 	}
 
-	// Композиция недр
+	// Композиция недр: count + share
 	subterrain := extractComposition(p.Data, "subterrain_composition")
-	for subType := range subterrain {
+	for subType, share := range subterrain {
 		stats.SubterrainCounts[subType]++
+		stats.SubterrainShares[subType] += share
 	}
 
 	// Геймдизайнерский тип
