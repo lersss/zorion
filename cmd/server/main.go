@@ -121,6 +121,9 @@ func main() {
 	http.HandleFunc("/admin/generate-factions", auth.AdminAuth(adminHandlers.GenerateFactions))
 	http.HandleFunc("/admin/generate-cancel", auth.AdminAuth(adminHandlers.CancelGeneration))
 
+	// Аудит
+	http.HandleFunc("/admin/audit", auth.AdminAuth(adminHandlers.GetAuditHandler))
+
 	// Матрица совместимости
 	http.HandleFunc("/admin/compatibility", auth.AdminAuth(compatHandlers.HandleMatrix))
 	http.HandleFunc("/admin/compatibility/reset", auth.AdminAuth(compatHandlers.ResetMatrix))
