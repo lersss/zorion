@@ -1,7 +1,12 @@
 # AGENTS.md — Руководство для AI-агентов
 
-> Этот файл содержит всю информацию, необходимую для работы с проектом Zorion.
-> Обновляется при изменении архитектуры, зависимостей или процессов.
+> Этот файл содержит технический контекст проекта Zorion для AI-инструментов
+> (OpenCode, Cursor, Claude Code и др.).
+>
+> **Дополняет:**
+> - `PROMPT.md` — правила работы с ассистентом (формат ответов, стиль).
+> - `STATUS.md` — текущий статус, что дальше, известные баги.
+> - `docs/ARCHITECTURE.md` — многопользовательская архитектура, структура кода.
 
 **Последнее обновление:** 2026-09-10
 **Module path:** `zorion`
@@ -16,6 +21,8 @@
 - Общие `*rand.Rand` не потокобезопасны — использовать локальный `rand.New(...)` на вызов.
 - Проверка + действие должны быть атомарными (`TryStart` вместо `if running + Start`).
 
+**Детально: `docs/ARCHITECTURE.md`, раздел 0.**
+
 ---
 
 ## 1. Стек технологий
@@ -23,10 +30,10 @@
 | Компонент | Технология |
 |-----------|-----------|
 | Бэкенд | Go 1.21+ |
-| БД | PostgreSQL 16+ |
-| Кеш | Redis 3+ |
+| БД | PostgreSQL 15+ |
+| Кеш | Redis 7+ |
 | Фронтенд | Vanilla JS (ES-модули), Canvas 2D |
-| Аутентификация | JWT (HS256, 24h) |
+| Аутентификация | JWT (HS256, 24h), секрет из env `JWT_SECRET` |
 | WebSocket | gorilla/websocket |
 | Тесты | testify |
 | Деплой | Amvera (Docker) |
@@ -37,18 +44,18 @@
 
 ```
 cmd/server/main.go          — точка входа
-config/                      — конфиги (archetypes, compatibility, anomalies)
-docs/                        — документация (CONTEXT.md, gamedesign/)
+config/                      — конфиги (archetypes, compatibility, anomalies, descriptions)
+docs/                        — документация (ARCHITECTURE, DESCRIPTIONS_WORK, gamedesign/)
 internal/
   auth/                      — JWT + middleware
   config/                    — загрузка env-переменных
   generator/
     galaxy/                  — генерация галактики (Poisson disk)
-    planet/                  — генерация планет (31 файл)
+    planet/                  — генерация планет + система описаний
     faction/                 — генерация фракций
     status.go                — трекинг статуса джобов
   audit/                     — движок аудита (обобщённый, generics)
-    planet/                  — 35+ правил проверки планет
+    planet/                  — 43 правила проверки планет
   handlers/                  — HTTP-хендлеры
   models/                    — модели данных
   repository/                — доступ к БД
@@ -66,6 +73,7 @@ web/
     map/                     — карта галактики (Canvas)
     modal/                   — модалка звёздной системы
     admin/                   — админ-панель
+migrations/                  — SQL-миграции
 ```
 
 ---
@@ -78,12 +86,15 @@ web/
 # Установить переменные окружения
 $env:DATABASE_URL = "postgres://zorion:zorion123@127.0.0.1:5432/zorion?sslmode=disable"
 $env:REDIS_URL = "redis://localhost:6379"
-$env:ADMIN_PASSWORD = "admin123"
+$env:JWT_SECRET = "минимум-32-символа-случайной-строки"
+$env:ADMIN_PASSWORD = "надёжный-пароль"
 $env:TICK_INTERVAL_SEC = "3"
 
 # Запуск
 go run cmd/server/main.go
 ```
+
+**Важно:** `JWT_SECRET` — обязателен. Без него сервер не стартует (`log.Fatal`).
 
 ### Docker
 
@@ -112,10 +123,10 @@ go build -o zorion.exe cmd/server/main.go
 | Таблица | Описание |
 |---------|---------|
 | `worlds` | Звёздные системы (координаты, спектральный класс) |
-| `planets` | Планеты (JSONB `data` — вся структура планеты) |
+| `planets` | Планеты (JSONB `data` — вся структура планеты, включая `description`) |
 | `locations` | Локации (JSONB `state`) |
 | `users` | Игроки (bcrypt пароли) |
-| `assignments` | Контракты |
+| `assignments` | Контракты (`type`, `reward`) |
 | `factions` | NPC-фракции |
 | `events` | Лог событий (event sourcing) |
 | `production_units` | Производственные единицы |
@@ -123,11 +134,24 @@ go build -o zorion.exe cmd/server/main.go
 | `factories` | Заводы |
 | `goods_batches` | Партии товаров |
 | `planet_resources` | Ресурсы планет (9 свойств float) |
-| `compatibility_matrix` | Матрица совместимости форм |
+| `compatibility_matrix` | Матрица совместимости форм (**миграция 009 не применена**) |
 
 ### Миграции
 
-Файлы в `migrations/`. Применяются в порядке именования.
+Файлы в `migrations/`. Применяются **вручную** через psql/DBeaver.
+
+| # | Файл | Что | Статус |
+|---|------|-----|--------|
+| 001 | `001_init.sql` | Основные таблицы | ✅ |
+| 002 | `002_users.sql` | Пользователи | ✅ |
+| 003 | `003_add_current_world_to_users.sql` | `current_world_id` | ✅ |
+| 004 | `004_factions.sql` | Фракции | ✅ |
+| 005 | `005_economy_tables.sql` | Экономика (пусто) | ⏭ |
+| 006 | `006_add_stellar_params.sql` | Параметры звёзд | ✅ |
+| 007 | `007_planet_resources.sql` | Ресурсы планет | ✅ |
+| 008 | `008_add_planet_indexes` | Индексы планет | ✅ |
+| 009 | `009_compatibility_matrix` | Матрица совместимости | ⚠️ не применено |
+| 010 | `010_assignments_type_reward` | `type`, `reward` в `assignments` | ✅ |
 
 ---
 
@@ -151,7 +175,7 @@ go build -o zorion.exe cmd/server/main.go
 | GET | `/worlds` | Список миров |
 | GET | `/worlds/{id}` | Мир + локации + контракты |
 | GET | `/api/worlds/{worldID}/planets` | Планеты мира |
-| GET | `/api/worlds/filter` | Фильтрация миров |
+| GET | `/api/worlds/filter` | Кластеры миров для карты (bounds + cell + gzip) |
 | GET | `/api/contracts` | Контракты (фильтры) |
 | POST | `/api/contracts/take` | Взять контракт |
 | POST | `/api/contracts/complete-test` | Тестовое выполнение |
@@ -227,22 +251,24 @@ go build -o zorion.exe cmd/server/main.go
 7. Генерация композиции недр (17 типов)
 8. Разрешение конфликтов по матрице совместимости
 9. Классификация в 11 геймдизайнерских типов
-10. Генерация спутников (для газовых гигантов)
-11. Генерация данных экономики (поселения, заводы, товары)
-12. Генерация ресурсов (по композиции и формам)
-13. Вставка в БД (батч)
+10. **Генерация описания** из библиотеки `config/descriptions/` (детерминированно по `planet.id`)
+11. Генерация спутников (для газовых гигантов)
+12. Генерация данных экономики (поселения, заводы, товары)
+13. Генерация ресурсов (по композиции и формам)
+14. Вставка в БД (батч)
 
 ### Конфигурация
 
 - Архетипы: `config/planet_archetypes.json`
 - Совместимость: `config/compatibility_defaults.json` → БД `compatibility_matrix`
 - Аномалии: `config/anomalies/*.json` (22 файла, seeds+tails)
+- **Описания: `config/descriptions/<type>/<openings|closings>_NN.json`** (11 типов, автопоиск при старте)
 
 ---
 
 ## 8. Аудит
 
-Движок `internal/audit/engine.go` — обобщённый (`Run[T]`). Правила `internal/audit/planet/` проверяют:
+Движок `internal/audit/engine.go` — обобщённый (`Run[T]`). Правила `internal/audit/planet/` (43 штуки) проверяют:
 
 - Физические диапазоны (температура, масса, размер, плотность)
 - Согласованность композиции и климата
@@ -275,9 +301,6 @@ go run cmd/server/main.go
 
 # Генерация зависимостей
 go mod tidy
-
-# Проверка на наличие неиспользуемых импортов
-go vet ./...
 ```
 
 ---
@@ -286,12 +309,16 @@ go vet ./...
 
 | Проблема | Где | Приоритет |
 |----------|-----|-----------|
-| JWT-секрет хардкод `your-secret-key` | `internal/auth/jwt.go` | 🔴 критично |
+| `ADMIN_PASSWORD` — дефолт `admin123` | `internal/config/config.go` | 🔴 критично |
+| `compatibility_matrix` не создана (миграция 009) | `migrations/` | 🟡 средний |
 | `Register` race → 500 вместо 409 | `internal/handlers/auth_handlers.go` | 🟡 средний |
 | Пагинатор миров не работает | `web/static/js/admin/worlds.js` | 🟡 средний |
 | Кэш текстур пишется, не читается | `internal/generator/planet/planet_image.go` | 🟢 низкий |
+| Опечатка `"разряженная"` | `config/planet_archetypes.json` | 🟢 низкий |
 | `internal/core/location_batch.go` — нерабочий импорт | `internal/core/location_batch.go` | ⚪ черновик |
 | Нет CI | `.github/workflows/` отсутствует | 🟡 средний |
+
+Полная таблица — в `STATUS.md`, раздел 3.
 
 ---
 
@@ -305,6 +332,7 @@ go vet ./...
 6. **Комментарии только по запросу.** Не добавлять `//` комментарии без просьбы.
 7. **Тесты.** Если есть — запускать. Если нет — проверять `go vet` и `go build`.
 8. **Одна правка — один коммит.** Не смешивать разные изменения.
+9. **Имена файлов в разных папках не должны совпадать.** Исключение — стандартные (`main.go`, `go.mod`, `index.html`).
 
 ---
 
@@ -320,34 +348,44 @@ go vet ./...
 | Физика | `internal/generator/planet/physics.go` |
 | Ядро | `internal/generator/planet/core.go` |
 | Классификация | `internal/generator/planet/classify.go` |
+| **Система описаний** | `internal/generator/planet/descriptions_*.go` |
 | Аудит | `internal/audit/planet/rules.go` |
 | Ресурсы | `internal/resource/generator.go` |
 | Имена | `internal/names/names.go` |
 | Хендлеры | `internal/handlers/*.go` |
+| **Фильтр миров для карты** | `internal/handlers/filter_worlds_handler.go` |
+| JWT | `internal/auth/jwt.go` |
 | Репозитории | `internal/repository/*.go` |
 | Миграции | `migrations/` |
 | Архетипы | `config/planet_archetypes.json` |
 | Совместимость | `config/compatibility_defaults.json` |
 | Аномалии | `config/anomalies/*.json` |
+| **Описания** | `config/descriptions/*/*.json` |
 | Фронтенд | `web/` |
 | GDD | `docs/gamedesign/` |
+| Архитектура | `docs/ARCHITECTURE.md` |
+| Статус | `STATUS.md` |
 
 ---
 
-## 13. Дорожная карта (текущий статус)
+## 13. Дорожная карта (актуальный статус — в `STATUS.md`)
 
 | # | Задача | Статус |
 |---|--------|--------|
-| 1 | Мини-карта в модалке | ⏸ Отложена |
-| 2 | Композиция поверхности и недр | ✅ Сделано |
-| 3 | Ресурсы (6 категорий, маппинг форм) | ✅ Сделано |
-| 4 | Ядро и физика температуры | ✅ Сделано |
-| 5 | Карточка планеты (UI) | ✅ Сделано |
-| 6 | Аудит планет | ✅ Сделано |
-| 7 | Аномалии как контент | ✅ Сделано (22 JSON) |
-| 8 | LLM-генерация описаний | 📅 Планируется |
-| 9 | Тонкая настройка генерации | 📅 Планируется |
-| 10 | Фракции | 📅 Планируется |
-| 11 | Экономика, энергия, контракты | 📅 Планируется |
+| 1 | Композиция поверхности и недр | ✅ Сделано |
+| 2 | Ресурсы (6 категорий, маппинг форм) | ✅ Сделано |
+| 3 | Ядро и физика температуры | ✅ Сделано |
+| 4 | Карточка планеты (UI) | ✅ Сделано |
+| 5 | Аудит планет (43 правила) | ✅ Сделано |
+| 6 | Библиотека аномалий (22 файла) | ✅ Сделано |
+| 7 | **Описания планет** (11 типов, ~700 текстов, Go-генератор) | ✅ Сделано |
+| 8 | **Серверная кластеризация карты** (100k миров) | ✅ Сделано |
+| 9 | **JWT-секрет из env** | ✅ Сделано |
+| 10 | **Балансировка классификатора** | ✅ Сделано |
+| 11 | Аномалии как контент (Go + API + фронт) | 🔄 Следующий блок |
+| 12 | LLM-генерация описаний | 📅 Планируется |
+| 13 | Тонкая настройка генерации | 📅 Планируется |
+| 14 | Фракции | 📅 Планируется |
+| 15 | Экономика, энергия, контракты | 📅 Планируется |
 
-**Текущий фокус:** Стабилизация после первого теста с несколькими игроками → переход к экономике.
+**Текущий фокус и ближайшие задачи — в `STATUS.md`, раздел 4.**
