@@ -152,7 +152,13 @@ func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
 // ==================== РЕСУРСЫ ====================
 
 // collectResources — генерирует ресурсы для планеты и добавляет их в буфер.
-// Тип планеты берётся из доминирующей формы поверхности.
+//
+// Извлекает из JSON планеты:
+//   - surface_dominant — доминирующая форма поверхности;
+//   - subterrain_composition — композиция недр.
+//
+// Газовые гиганты пропускаются — у них нет ни поверхности, ни недр
+// (там ресурсы идут от атмосферы, отдельный механизм).
 func (g *Generator) collectResources(
 	planetID string,
 	dataJSON []byte,
@@ -164,12 +170,26 @@ func (g *Generator) collectResources(
 		return
 	}
 
+	// Пропускаем газовые гиганты
+	if isGasGiant(data) {
+		return
+	}
+
 	dominant := getString(data, "surface_dominant")
 	if dominant == "" {
 		dominant = SurfaceRocks
 	}
 
-	resources := resource.GenerateResources(planetID, dominant, spectralClass, g.rng)
+	subterrain := extractSubterrainComposition(data)
+
+	resources := resource.GenerateResources(
+		planetID,
+		dominant,
+		subterrain,
+		spectralClass,
+		g.rng,
+	)
+
 	for _, res := range resources {
 		*rows = append(*rows, []interface{}{
 			res.ID,
@@ -189,6 +209,22 @@ func (g *Generator) collectResources(
 			time.Now(),
 		})
 	}
+}
+
+// extractSubterrainComposition — вытаскивает композицию недр из JSON планеты.
+// Формат в JSON: {"subterrain_composition": {"рудные_жилы": 25.0, ...}}.
+func extractSubterrainComposition(data map[string]interface{}) map[string]float64 {
+	result := map[string]float64{}
+	raw, ok := data["subterrain_composition"].(map[string]interface{})
+	if !ok {
+		return result
+	}
+	for k, v := range raw {
+		if f, ok := v.(float64); ok {
+			result[k] = f
+		}
+	}
+	return result
 }
 
 // ==================== ХЕЛПЕРЫ ДЛЯ JSON ====================
