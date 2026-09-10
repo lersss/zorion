@@ -1,37 +1,34 @@
+// web/static/js/map/navigation.js
 import { state, elements } from './config.js';
 import { draw } from './map_render.js';
 
+// centerOnAgent — центрирует карту на текущем мире игрока.
+// Мир должен быть в state.worlds (его кладёт туда loadUserData
+// через /worlds/{id}). Если не найден — молча выходим.
 export function centerOnAgent() {
-    console.log('centerOnAgent called, currentWorldId:', state.currentWorldId);
     if (!state.currentWorldId) {
-        console.warn('currentWorldId is null or undefined');
-        if (state.worlds && state.worlds.length > 0) {
-            state.currentWorldId = state.worlds[0].id;
-            elements.currentWorldNameEl.textContent = state.worlds[0].name;
-            console.log('Auto-assigned first world locally:', state.currentWorldId);
-        } else {
-            alert('Нет миров для центрирования.');
-            return;
-        }
-    }
-    if (!state.worlds || state.worlds.length === 0) {
-        console.warn('worlds is empty');
-        alert('Нет миров для центрирования.');
+        console.warn('centerOnAgent: currentWorldId не задан');
         return;
     }
-    const world = state.worlds.find(w => w.id === state.currentWorldId);
+
+    const world = (state.worlds || []).find(w => w.id === state.currentWorldId);
     if (!world) {
-        console.warn('World with id', state.currentWorldId, 'not found in worlds list');
-        alert('Мир не найден в списке. Возможно, данные не загружены.');
+        console.warn('centerOnAgent: мир', state.currentWorldId, 'не найден в кэше');
         return;
     }
-    console.log('Centering on world:', world.name, world.coord_x, world.coord_y);
-    const cx = world.coord_x;
-    const cy = world.coord_y;
+
+    if (typeof world.coord_x !== 'number' || typeof world.coord_y !== 'number') {
+        console.warn('centerOnAgent: у мира нет координат');
+        return;
+    }
+
     const targetScale = Math.max(state.scale, 1.0);
-    state.offsetX = state.canvasWidth / 2 - cx * targetScale;
-    state.offsetY = state.canvasHeight / 2 - cy * targetScale;
+    state.offsetX = state.canvasWidth / 2 - world.coord_x * targetScale;
+    state.offsetY = state.canvasHeight / 2 - world.coord_y * targetScale;
     state.scale = targetScale;
-    elements.zoomInfo.textContent = Math.round(state.scale * 100) + '%';
+
+    if (elements.zoomInfo) {
+        elements.zoomInfo.textContent = Math.round(state.scale * 100) + '%';
+    }
     draw();
 }
