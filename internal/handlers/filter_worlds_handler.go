@@ -2,17 +2,32 @@
 package handlers
 
 import (
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
-
-	"zorion/internal/models"
+	"time"
 )
 
-// FilterWorldsHandler возвращает миры с фильтрацией по планетам
+// worldMapItem — облегчённая структура мира для карты.
+// Не включает created_at / updated_at: фронту они не нужны, а на 100k миров
+// это экономит несколько мегабайт трафика.
+type worldMapItem struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	CoordX        float64 `json:"coord_x"`
+	CoordY        float64 `json:"coord_y"`
+	SpectralClass string  `json:"spectral_class"`
+	Temperature   float64 `json:"temperature"`
+}
+
+// FilterWorldsHandler возвращает миры с фильтрацией по планетам.
 func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Request) {
+	tStart := time.Now()
+
 	defer func() {
 		if rec := recover(); rec != nil {
 			log.Printf("🔥 PANIC in FilterWorldsHandler: %v", rec)
@@ -28,12 +43,9 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 	planetType := queryParams.Get("planet_type")
 	resourceCategory := queryParams.Get("resource_category")
 
-	// Логирование параметров
-	log.Printf("🔍 FilterWorldsHandler params: hasPlanets=%v, hasLife=%v, hasHabitable=%v, planetType='%s', resourceCategory='%s'",
-		hasPlanets, hasLife, hasHabitable, planetType, resourceCategory)
-
+	// --- СБОРКА SQL ---
 	sqlQuery := `
-		SELECT w.id, w.name, w.coord_x, w.coord_y, w.spectral_class, w.temperature, w.created_at, w.updated_at
+		SELECT w.id, w.name, w.coord_x, w.coord_y, w.spectral_class, w.temperature
 		FROM worlds w
 		WHERE 1=1
 	`
@@ -50,7 +62,6 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id AND (p.data->>'habitable')::boolean = true)`
 	}
 	if planetType != "" {
-		// Приводим к нижнему регистру для сравнения
 		planetTypeLower := strings.ToLower(planetType)
 		sqlQuery += ` AND EXISTS (SELECT 1 FROM planets p WHERE p.world_id = w.id AND LOWER(p.data->>'type') = $` + strconv.Itoa(argCounter) + `)`
 		args = append(args, planetTypeLower)
@@ -58,54 +69,81 @@ func (h *AdminHandlers) FilterWorldsHandler(w http.ResponseWriter, r *http.Reque
 	}
 	if resourceCategory != "" {
 		sqlQuery += ` AND EXISTS (
-			SELECT 1 FROM planets p 
-			WHERE p.world_id = w.id 
-			  AND p.data->'resources'->>$` + strconv.Itoa(argCounter) + ` IS NOT NULL 
+			SELECT 1 FROM planets p
+			WHERE p.world_id = w.id
+			  AND p.data->'resources'->>$` + strconv.Itoa(argCounter) + ` IS NOT NULL
 			  AND (p.data->'resources'->>$` + strconv.Itoa(argCounter) + `)::float > 0.3
 		)`
 		args = append(args, resourceCategory)
 		argCounter++
 	}
 
-	// Логируем SQL
-	log.Printf("🔍 FilterWorldsHandler SQL: %s, args: %v", sqlQuery, args)
-
-	rows, err := h.db.Query(sqlQuery, args...)
+	// --- ЗАПРОС К БД ---
+	tQuery := time.Now()
+	rows, err := h.db.QueryContext(r.Context(), sqlQuery, args...)
 	if err != nil {
 		log.Printf("❌ FilterWorldsHandler query error: %v", err)
-		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
+	queryDur := time.Since(tQuery)
 
-	worlds := []models.World{}
+	// --- ЧТЕНИЕ СТРОК ---
+	items := make([]worldMapItem, 0, 4096)
 	for rows.Next() {
-		var world models.World
+		var it worldMapItem
 		if err := rows.Scan(
-			&world.ID,
-			&world.Name,
-			&world.CoordX,
-			&world.CoordY,
-			&world.SpectralClass,
-			&world.Temperature,
-			&world.CreatedAt,
-			&world.UpdatedAt,
+			&it.ID,
+			&it.Name,
+			&it.CoordX,
+			&it.CoordY,
+			&it.SpectralClass,
+			&it.Temperature,
 		); err != nil {
 			log.Printf("❌ FilterWorldsHandler scan error: %v", err)
-			http.Error(w, "Scan error: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
 		}
-		worlds = append(worlds, world)
+		items = append(items, it)
 	}
 	if err = rows.Err(); err != nil {
 		log.Printf("❌ FilterWorldsHandler rows error: %v", err)
-		http.Error(w, "Rows error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Rows error", http.StatusInternalServerError)
 		return
 	}
+	scanDur := time.Since(tQuery) - queryDur
 
+	// --- СЕРИАЛИЗАЦИЯ + ОТПРАВКА ---
+	// Заголовки нужно выставить ДО первого Write — после уже поздно.
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(worlds); err != nil {
-		log.Printf("❌ FilterWorldsHandler encode error: %v", err)
-		http.Error(w, "Encode error: "+err.Error(), http.StatusInternalServerError)
+	w.Header().Set("Cache-Control", "no-store")
+
+	var writer io.Writer = w
+	useGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+	if useGzip {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		writer = gz
 	}
+
+	tEncode := time.Now()
+	// Если клиент отвалился — Encode вернёт ошибку, но http.Error уже
+	// вызывать нельзя (заголовки улетели). Просто логируем и выходим.
+	if err := json.NewEncoder(writer).Encode(items); err != nil {
+		log.Printf("⚠️ FilterWorldsHandler encode error (клиент, вероятно, отвалился): %v", err)
+		return
+	}
+	encodeDur := time.Since(tEncode)
+
+	log.Printf(
+		"🗺️  FilterWorlds: %d миров, query=%v, scan=%v, encode=%v, total=%v, gzip=%v",
+		len(items),
+		queryDur.Round(time.Millisecond),
+		scanDur.Round(time.Millisecond),
+		encodeDur.Round(time.Millisecond),
+		time.Since(tStart).Round(time.Millisecond),
+		useGzip,
+	)
 }
