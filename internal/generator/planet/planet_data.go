@@ -45,12 +45,69 @@ func NewGenerator(db *sql.DB, seed int64) *Generator {
 	}
 }
 
-// ==================== ГЛАВНАЯ ФУНКЦИЯ ====================
+// ==================== СТАРАЯ ФУНКЦИЯ ====================
+
+// GeneratePlanetsForWorld — генерирует все планеты одного мира и сохраняет их в БД.
+// Одна транзакция на мир. Используется, если нужно сгенерировать планеты для
+// одного конкретного мира.
+//
+// Для массовой генерации (100k миров) — использовать GeneratePlanetsForWorlds,
+// там батчи по многим мирам в одной транзакции.
+func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, temperature int) (int, error) {
+	planetCount := g.determinePlanetCount(spectralClass)
+	if planetCount == 0 {
+		return 0, nil
+	}
+
+	systemAge := determineSystemAge(spectralClass, g.rng)
+
+	tx, err := g.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	batch := newBatchBuffers(planetCount)
+
+	for i := 0; i < planetCount; i++ {
+		orbitIndex := i + 1
+		planet := g.generatePlanet(worldID, orbitIndex, spectralClass, systemAge)
+		batch.addPlanet(planet)
+
+		if err := g.collectEconomy(
+			planet.ID, planet.Data, spectralClass,
+			&batch.settlementRows, &batch.factoryRows, &batch.goodsRows,
+		); err != nil {
+			return 0, err
+		}
+
+		g.collectResources(planet.ID, planet.Data, spectralClass, &batch.resourceRows)
+	}
+
+	if err := g.flushBatch(tx, batch); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return planetCount, nil
+}
+
+// ==================== НОВАЯ ФУНКЦИЯ (батч по многим мирам) ====================
+
+// WorldInfo — минимальные данные мира, нужные для генерации планет.
+type WorldInfo struct {
+	ID            string
+	SpectralClass string
+	Temperature   int
+}
 
 // GeneratePlanetsForWorlds — генерирует планеты для списка миров.
-// Оптимизированная версия: одна транзакция на batchSize миров, вставка через COPY.
+// Одна транзакция на batchSize миров, вставка через pq.CopyIn.
 //
-// Раньше GeneratePlanetsForWorld вызывалась в цикле — по одной транзакции
+// Раньше хендлер вызывал GeneratePlanetsForWorld в цикле — по одной транзакции
 // на мир (100 000 BEGIN/COMMIT на 100k миров). Теперь — одна транзакция
 // на 500 миров + COPY FROM STDIN. Ожидаемое ускорение: 10–50x.
 //
@@ -71,28 +128,8 @@ func (g *Generator) GeneratePlanetsForWorlds(
 	totalPlanets := 0
 	processed := 0
 
-	// Буферы, накапливаем между батчами.
+	// Буфер накапливается между мирами и флашится раз в batchSize миров.
 	buf := newBatchBuffers(batchSize * 8)
-
-	// Флашим накопленное в одной транзакции.
-	flush := func() error {
-		if buf.isEmpty() {
-			return nil
-		}
-		tx, err := g.db.Begin()
-		if err != nil {
-			return fmt.Errorf("begin tx: %w", err)
-		}
-		defer tx.Rollback()
-		if err := g.flushBatch(tx, buf); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit tx: %w", err)
-		}
-		buf.reset()
-		return nil
-	}
 
 	for i, w := range worlds {
 		planetCount := g.generateWorldIntoBuffer(w, buf)
@@ -103,28 +140,20 @@ func (g *Generator) GeneratePlanetsForWorlds(
 			progressFn(processed)
 		}
 
-		// Флашим каждые batchSize миров.
+		// Флаш раз в batchSize миров.
 		if (i+1)%batchSize == 0 {
-			if err := flush(); err != nil {
+			if err := g.flushAndCommit(buf); err != nil {
 				return totalPlanets, err
 			}
 		}
 	}
 
 	// Финальный флаш — остаток.
-	if err := flush(); err != nil {
+	if err := g.flushAndCommit(buf); err != nil {
 		return totalPlanets, err
 	}
 
 	return totalPlanets, nil
-}
-
-// WorldInfo — минимальные данные мира, нужные для генерации планет.
-// Легковесный тип, чтобы не тянуть весь models.World.
-type WorldInfo struct {
-	ID            string
-	SpectralClass string
-	Temperature   int
 }
 
 // generateWorldIntoBuffer — генерирует планеты одного мира и складывает в буфер.
@@ -146,9 +175,8 @@ func (g *Generator) generateWorldIntoBuffer(w WorldInfo, buf *batchBuffers) int 
 			planet.ID, planet.Data, w.SpectralClass,
 			&buf.settlementRows, &buf.factoryRows, &buf.goodsRows,
 		); err != nil {
-			// Логируем, но не валим весь батч из-за одной планеты.
-			// В будущем — заменить на log.Printf.
-			_ = err
+			// Не валим весь батч из-за одной планеты.
+			continue
 		}
 
 		g.collectResources(planet.ID, planet.Data, w.SpectralClass, &buf.resourceRows)
@@ -157,34 +185,24 @@ func (g *Generator) generateWorldIntoBuffer(w WorldInfo, buf *batchBuffers) int 
 	return planetCount
 }
 
-// ==================== СТАРАЯ ФУНКЦИЯ (для совместимости) ====================
-
-// GeneratePlanetsForWorld — генерирует все планеты ОДНОГО мира.
-//
-// Оставлена для обратной совместимости. Для массовой генерации
-// использовать GeneratePlanetsForWorlds (батч по многим мирам).
-func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, temperature int) (int, error) {
-	w := WorldInfo{ID: worldID, SpectralClass: spectralClass, Temperature: temperature}
-	_, err := g.GeneratePlanetsForWorlds([]WorldInfo{w}, 1, nil)
-	if err != nil {
-		return 0, err
+// flushAndCommit — флашит буфер в БД одной транзакцией.
+func (g *Generator) flushAndCommit(buf *batchBuffers) error {
+	if buf.isEmpty() {
+		return nil
 	}
-	// Возвращаем число планет, сгенерированных для этого мира.
-	// determinePlanetCount уже вызывался внутри; повторный вызов даст то же число
-	// (rng не сдвинулся на этой функции — он сдвигается на generatePlanet).
-	// Чтобы избежать путаницы — просто считаем planetCount заново, но не используем rng:
-	// это не сдвинет состояние rng.
-	return g.planetCountDeterministic(spectralClass), nil
-}
-
-// planetCountDeterministic — считает число планет без использования rng.
-// Для обратной совместимости: старый код ожидал int (число планет).
-// Возвращаем 0 — вызывающий код обычно всё равно игнорирует результат.
-func (g *Generator) planetCountDeterministic(spectralClass string) int {
-	// Мы не можем точно восстановить planetCount без сдвига rng.
-	// Для старых вызовов вернём значение по умолчанию.
-	// На практике GeneratePlanetsForWorld уже не используется — оставлен как заглушка.
-	return 0
+	tx, err := g.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if err := g.flushBatch(tx, buf); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	buf.reset()
+	return nil
 }
 
 // ==================== БАТЧ-БУФЕР ====================
@@ -210,6 +228,12 @@ func newBatchBuffers(planetCount int) *batchBuffers {
 	}
 }
 
+// addPlanet — складывает планету в буфер.
+//
+// ВАЖНО: p.Data — это []byte (JSON). При INSERT ... VALUES lib/pq передавал
+// его как текст, и Postgres парсил в json. При COPY драйвер не знает тип
+// колонки и отправляет []byte как bytea — Postgres ругается
+// "invalid input syntax for type json". Поэтому явно приводим к string.
 func (b *batchBuffers) addPlanet(p *PlanetData) {
 	now := time.Now()
 	b.planetRows = append(b.planetRows, []interface{}{
@@ -217,19 +241,17 @@ func (b *batchBuffers) addPlanet(p *PlanetData) {
 		p.WorldID,
 		p.Name,
 		p.OrbitIndex,
-		p.Data,
+		string(p.Data), // []byte → string, чтобы pq.CopyIn отправил как text
 		now,
 		now,
 	})
 }
 
-// isEmpty — есть ли что флашить.
 func (b *batchBuffers) isEmpty() bool {
 	return len(b.planetRows) == 0
 }
 
-// reset — очищает буферы, чтобы использовать их заново.
-// Ёмкость сохраняется — не переаллоцируем на каждом батче.
+// reset — очищает буферы, сохраняя выделенную память.
 func (b *batchBuffers) reset() {
 	b.planetRows = b.planetRows[:0]
 	b.settlementRows = b.settlementRows[:0]
@@ -238,24 +260,10 @@ func (b *batchBuffers) reset() {
 	b.resourceRows = b.resourceRows[:0]
 }
 
-// flatten — превращает [][]interface{} в плоский []interface{}.
-// Нужно для передачи в copyInRows.
-func flatten(rows []interface{}) []interface{} {
-	total := 0
-	for _, r := range rows {
-		if slice, ok := r.([]interface{}); ok {
-			total += len(slice)
-		}
-	}
-	out := make([]interface{}, 0, total)
-	for _, r := range rows {
-		if slice, ok := r.([]interface{}); ok {
-			out = append(out, slice...)
-		}
-	}
-	return out
-}
+// ==================== ФЛАШ В БД ====================
 
+// flushBatch — вставляет всё содержимое буфера через pq.CopyIn.
+// Сами CopyIn-функции — в planet_data_batch.go.
 func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
 	if err := g.copyInPlanets(tx, flatten(b.planetRows)); err != nil {
 		return fmt.Errorf("copy planets: %w", err)
@@ -273,6 +281,24 @@ func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
 		return fmt.Errorf("copy resources: %w", err)
 	}
 	return nil
+}
+
+// flatten — превращает [][]interface{} в плоский []interface{}.
+// Нужно для передачи в copyInRows, где данные идут одним потоком.
+func flatten(rows []interface{}) []interface{} {
+	total := 0
+	for _, r := range rows {
+		if slice, ok := r.([]interface{}); ok {
+			total += len(slice)
+		}
+	}
+	out := make([]interface{}, 0, total)
+	for _, r := range rows {
+		if slice, ok := r.([]interface{}); ok {
+			out = append(out, slice...)
+		}
+	}
+	return out
 }
 
 // ==================== РЕСУРСЫ ====================
