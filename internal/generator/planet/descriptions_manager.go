@@ -7,16 +7,10 @@ import (
 )
 
 // ==================== ГЛОБАЛЬНЫЙ МЕНЕДЖЕР ====================
-//
-// Инициализируется один раз при старте сервера (LoadDescriptions),
-// после чего только читается из горутин. RWMutex внутри менеджера
-// защищает карты от конкурентного чтения.
 
 var globalDescriptions *descriptionsManager
 
 // LoadDescriptionsGlobal — инициализация глобального менеджера.
-// Вызывается один раз из main.go. При ошибке — log.Fatal на стороне
-// вызывающего (сервер не должен стартовать без описаний).
 func LoadDescriptionsGlobal(baseDir string) error {
 	m, err := LoadDescriptions(baseDir)
 	if err != nil {
@@ -29,9 +23,7 @@ func LoadDescriptionsGlobal(baseDir string) error {
 // ==================== ТОЧКА ВХОДА ====================
 
 // GenerateDescription — собирает описание планеты: зачин + концовка.
-// Если для типа нет подходящих записей — возвращает fallback
-// (детерминированный по planetID), чтобы поле description никогда
-// не было пустым.
+// Если для типа нет подходящих записей — возвращает fallback.
 func GenerateDescription(ctx DescriptionContext) string {
 	if globalDescriptions == nil {
 		return fallbackDescription(ctx.PlanetID)
@@ -45,19 +37,27 @@ func (m *descriptionsManager) generate(ctx DescriptionContext) string {
 		return fallbackDescription(ctx.PlanetID)
 	}
 
+	folder := typeToFolder(ctx.Type)
+	if folder == "" {
+		log.Printf(
+			"descriptions: неизвестный тип %q для планеты %s",
+			ctx.Type, ctx.PlanetID,
+		)
+		return fallbackDescription(ctx.PlanetID)
+	}
+
 	tags := computeTags(ctx)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	opening, okOpen := m.pickOpening(ctx.PlanetID, ctx.Type, tags)
-	closing, okClose := m.pickClosing(ctx.PlanetID, ctx.Type, tags)
+	opening, okOpen := m.pickOpening(ctx.PlanetID, folder, tags)
+	closing, okClose := m.pickClosing(ctx.PlanetID, folder, tags)
 
-	// Если не нашлось ни одной подходящей записи — fallback.
 	if !okOpen && !okClose {
 		log.Printf(
-			"descriptions: fallback для планеты %s (тип %s, тегов=%d)",
-			ctx.PlanetID, ctx.Type, len(tags),
+			"descriptions: fallback для планеты %s (тип %s, папка %s, тегов=%d)",
+			ctx.PlanetID, ctx.Type, folder, len(tags),
 		)
 		return fallbackDescription(ctx.PlanetID)
 	}
@@ -67,13 +67,6 @@ func (m *descriptionsManager) generate(ctx DescriptionContext) string {
 
 // ==================== СКЛЕЙКА ====================
 
-// joinDescription — склеивает зачин и концовку.
-// Если одна из частей пустая — возвращает только вторую.
-//
-// Когда появятся средние блоки (climate, surface, ...), логика
-// расширится здесь: pieces := []string{opening, climate, surface,
-// interior, atmosphere, biosphere, closing}; strings.Join(pieces,
-// descriptionSeparator).
 func joinDescription(opening, closing string) string {
 	switch {
 	case opening == "" && closing == "":
@@ -88,13 +81,6 @@ func joinDescription(opening, closing string) string {
 }
 
 // ==================== FALLBACK ====================
-//
-// Используется, когда для планеты не нашлось ни одного подходящего
-// зачина и ни одной концовки. Варианты подобраны в нейтральном тоне —
-// подходят любому типу планеты, не противоречат ни одному тегу.
-//
-// Выбор — детерминированный по planetID, чтобы одна и та же планета
-// всегда получала один и тот же fallback.
 
 var fallbackVariants = []string{
 	"Ничем не примечательная планета. Ни ресурсов, ни жизни, ни истории — только камень и время.",
@@ -112,8 +98,6 @@ var fallbackVariants = []string{
 	"Один из тех миров, что редко попадают на карты. Не потому что опасны или недоступны, а потому что нечем зацепиться.",
 }
 
-// fallbackDescription — выбирает вариант по хэшу от planetID.
-// Пустой planetID → первый вариант (детерминированно).
 func fallbackDescription(planetID string) string {
 	if len(fallbackVariants) == 0 {
 		return ""
@@ -127,9 +111,6 @@ func fallbackDescription(planetID string) string {
 
 // ==================== ДИАГНОСТИКА ====================
 
-// DescriptionsStats — публичная сводка для /admin или healthcheck.
-// Возвращает копию, чтобы вызывающий не мог испортить внутреннее
-// состояние менеджера.
 func DescriptionsStats() map[string]descriptionsStats {
 	if globalDescriptions == nil {
 		return nil
@@ -146,9 +127,6 @@ func DescriptionsStats() map[string]descriptionsStats {
 
 // ==================== УТИЛИТЫ ====================
 
-// trimDescription — убирает лишние пробелы по краям и склеивает
-// множественные переносы. На случай, если в JSON кто-то оставил
-// лишние \n в начале/конце text.
 func trimDescription(s string) string {
 	s = strings.TrimSpace(s)
 	for strings.Contains(s, "\n\n\n") {
