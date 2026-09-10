@@ -10,36 +10,113 @@
 
 ### Добавлено
 
-**Библиотека аномалий (контент)**
-- Папка `config/anomalies/` — **22 JSON-файла**, по одному на аномалию.
-- Формат: `code`, `title`, `icon`, `seeds` (10 × 2 абзаца), `tails` (10 × 1 абзац).
-- Композиция текста: `seed + "\n\n" + tail` = 3 абзаца, ~150–200 слов.
-- Детерминированный выбор по хэшу:
-  - `seedIndex = hash(planet.id + code + ":seed") % 10`
-  - `tailIndex = hash(planet.id + code + ":tail") % 10`
-- До 100 вариантов текста на аномалию, до 2200 комбинаций на всю библиотеку.
-- `config/anomalies/README.md` — описание формата.
-- Коды совпадают с кодами правил в `internal/audit/planet/`.
-- **7 файлов переписаны в едином стиле** — были с языковыми вставками
-  (китайские/английские обрывки, следы другой генерации):
-  `greenhouse_in_cold`, `habitable_without_life`, `methane_in_heat`,
-  `oceans_without_water`, `oxygen_in_heat`, `population_on_gas_giant`,
-  `satellite_mass_too_high`.
+**Описания планет (фазы 1+2)**
+- **Фаза 1 (скелет):** 8 типов × (30 openings + 30 closings) = 480 текстов:
+  `volcanic`, `desert`, `earthlike`, `radioactive`, `organic`, `glass`, `metal`, `rocky`.
+- **Ранее:** `gas_giant`, `icy`, `oceanic` — по 150+150 (уже в репозитории).
+- **Итого:** 11 типов, ~705 зачинов, ~690 концовок.
+- **Фаза 2 (Go-код):** новые файлы в `internal/generator/planet/`:
+  - `descriptions_types.go` — структуры (`Opening`, `Closing`, `DescriptionContext`, `descriptionsManager`).
+  - `descriptions_tags.go` — вычисление тегов из контекста планеты.
+  - `descriptions_load.go` — автопоиск JSON-файлов при старте, загрузка в память.
+  - `descriptions_pick.go` — фильтрация по тегам и выбор по хэшу (FNV-1a).
+  - `descriptions_manager.go` — точка входа `GenerateDescription`, склейка, fallback.
+  - `descriptions_mapping.go` — маппинг «геймдизайнерский тип → папка» (`TypeIce` → `icy`).
+- Автопоиск: сервер сам сканирует `config/descriptions/<type>/`, подхватывает
+  все `openings_*.json` и `closings_*.json`. Новые файлы — через `git push`, без правок кода.
+- Детерминированный выбор по хэшу от `planet.id`. Fallback — 7 нейтральных вариантов.
+- Интеграция: `planet_data_generate.go`, `planet_data_gas.go`, `main.go`.
+- **Детали:** `docs/DESCRIPTIONS_WORK.md`.
+
+**Серверная кластеризация карты**
+- `filter_worlds_handler.go` переписан под SQL `GROUP BY` по ячейкам сетки.
+- Клиент присылает `x_min/x_max/y_min/y_max/cell`, сервер отдаёт 100–5000 кластеров
+  вместо 100 000 миров. Gzip-сжатие ответа.
+- Фронт: `map_render.js` рисует кластеры (кружки с числами), `data.js` грузит
+  их с debounce 180 мс, `events.js` — pan/zoom/click, `main.js`, `animation.js`, `navigation.js`.
+- `minZoom: 0.02 → 0.001` — можно отдалить до всей галактики.
+- **Результат:** карта на 100k миров отвечает за < 100 мс.
+
+**Миграции БД**
+- `000010_assignments_type_reward.up.sql` / `.down.sql` — добавить колонки
+  `type` и `reward` в `assignments` (используются кодом, но отсутствовали в схеме).
+
+**Безопасность**
+- JWT-секрет читается из env `JWT_SECRET` через `auth.InitJWTSecret` в `main.go`.
+  Валидация длины ≥ 32 байта. Без секрета сервер не стартует.
+
+### Изменено
+
+**Безопасность**
+- `internal/auth/jwt.go` — секрет больше не хардкод, живёт под `RWMutex`.
+- `internal/auth/jwt.go` — в `VerifyToken` добавлена проверка алгоритма
+  (защита от подмены `alg: none`).
+- `internal/config/config.go` — `JWT_SECRET` обязателен, `log.Fatal` при пустом.
+- `cmd/server/main.go` — вызов `auth.InitJWTSecret` в начале `main()`.
+
+**Классификатор планет (`classify.go`)**
+- **Ледяная:** `T < 150` теперь требует `ShareOf(Glaciers) >= 30`. Раньше любая
+  холодная планета становилась ледяной (перекос 28%).
+- **Органик:** порог по сумме биосферных форм `>= 25%` вместо требования доминанты
+  (тип был почти недостижим: 0,1%).
+- **Стекло/металл:** пороги `15 → 10` (эти формы в архетипах редко доходят до 15%).
+
+**Карта миров**
+- `filter_worlds_handler.go` — облегчённые поля (убраны `created_at`, `updated_at`),
+  gzip, таймеры в лог, `QueryContext`, фикс `superfluous WriteHeader`.
+- `GetWorld` (`world_handlers.go`) — устойчивость к падениям locations/assignments:
+  если вспомогательный запрос падает, ответ всё равно уходит. `sql.ErrNoRows` → 404, не 500.
+
+**Описания планет**
+- `planet_data_generate.go` — UUID генерится раньше (нужен для выбора описания),
+  все три генератора заполняют `DescriptionContext`.
+- `planet_data_gas.go` — газовый гигант тоже получает описание из библиотеки.
+- Фикс бага с ключом `surface:` в `generateRadioactivePlanet` — заменено
+  на явную переменную `dominantSurface`.
+
+### Исправлено
+
+- **JWT-секрет — хардкод `your-secret-key`** → env. Критично, было в публичном репозитории.
+- **`GetWorld` 500 при несуществующих locations/assignments** → устойчивость.
+- **`column "type" does not exist`** в `assignmentRepo.GetByWorld` → миграция `000010`.
+- **`concurrent map writes`** — не в этой сессии, но фикс в `planet_image.go`
+  (`sync.Mutex` на `cache`/`cacheOrder`/`rand`).
+- **`superfluous response.WriteHeader call`** в `filter_worlds_handler.go` —
+  убран `http.Error` после начала записи ответа.
+
+### Удалено
+
+- `internal/generator/planet/planet_data_description.go` — старая `generateDescription`
+  больше не вызывается. **Восстановлен** после ошибочного удаления: файл содержит
+  функцию `clamp`, нужную `physics.go`. `generateDescription` в нём — мёртвый код,
+  пусть лежит.
 
 ### В планах
-- **Аномалии как контент — остаток:**
-  - Go-код: чтение `config/anomalies/` при старте, кеш в памяти под `RWMutex`.
-  - API: эндпоинт, отдающий тексты фронту.
-  - Детекция на фронте по данным планеты (по кодам из аудита).
-  - Показ: отдельный блок в карточке планеты внизу под описанием.
-- LLM-генерация описаний планет и аномалий (Groq / YandexGPT) при создании планеты.
-- Тонкая настройка генерации — все хардкод-константы в админку.
-- Вкладка «Совместимость» в админке (frontend).
+
+**Аномалии как контент** (следующий крупный блок)
+- Библиотека готова (22 JSON-файла в `config/anomalies/`).
+- Осталось: Go-код чтения при старте, API, детекция на фронте, показ в карточке планеты.
+
+**LLM-генерация описаний**
+- Groq / YandexGPT при создании планеты, сохранение в БД.
+- Fallback — библиотека `config/descriptions/` + библиотека аномалий.
+
+**Тонкая настройка генерации**
+- Все хардкод-константы в конфиг, редактируемый через админку.
+
+**Расширение описаний**
+- Добить до 150+150 популярные типы: `desert`, `volcanic`, `earthlike`.
+- Ревизия `gas_giant`/`icy` (600 текстов) под актуальные теги.
+
+**Безопасность и инфраструктура**
+- `ADMIN_PASSWORD` — сейчас дефолт `admin123`, нужен обязательный из env.
+- Обработка `unique_violation` (23505) в `Register` — 409 вместо 500.
+- Вкладка «Совместимость» в админке (frontend для готового backend).
+- `compatibility_matrix` — миграция `009` не применена, таблицы нет.
 - Модель энергии: планетарный рынок, микроконтракты.
 - Миграция старых категорий ресурсов (`energy` → `fuel`).
 - Рефакторинг остальных генераторов имён на `LocalizedName`.
-- **Критично:** JWT-секрет в переменную окружения (сейчас хардкод в `jwt.go`).
-- Обработка `unique_violation` в `Register` (race при одновременной регистрации).
+- CI с `go vet`, `go test`, `go vet -race`.
 
 ---
 
@@ -94,7 +171,6 @@
 - **`TravelManager`** — старый полёт не удаляет новый (проверка `current == flight`).
 - **`StatusManager`** — новый метод `TryStart` (атомарная проверка + запуск).
 - **`admin_universe.go`** — `TryStart` вместо `if + Start`, безопасный `recoverErr`, `ClearUniverse` блокируется при активной генерации.
-- **`Register`** — обсуждение race (защита на уровне БД, но нужна обработка `23505`).
 - **`composition_modifiers.go`** — биосферные формы при `T < 250` умножаются на ×0.05 (было ×0.2–0.3). Абсолютные запреты: лава при `T < 500`, лёд при `T > 320`.
 - **`computeSatelliteTemp`** — приливный нагрев снижен с 400 до 100, добавлен потолок `giantTemp + 50`.
 - **`checks_physics.go`** — severity биосферных форм в холоде `high` → `low`; газовые гиганты исключены из `hydrogen_in_heat`.

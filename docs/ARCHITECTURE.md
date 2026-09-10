@@ -1,0 +1,192 @@
+# Архитектура Zorion
+
+> Технический документ. Отвечает на вопросы: **как устроен код, что где лежит,
+> какие правила конкурентности**. Дополняет `PROMPT.md` (правила работы с ассистентом)
+> и `STATUS.md` (где мы сейчас).
+>
+> Обновляется по мере изменения структуры кода. Не дублирует GDD.
+
+**Последнее обновление:** 2026-09-10
+
+---
+
+## 0. КЛЮЧЕВОЕ ПРАВИЛО: игра многопользовательская
+
+**Zorion — игра с одновременной работой нескольких игроков на одном сервере.**
+Об этом надо помнить при **любой** правке кода. Нагрузка одного игрока — не показатель,
+проблемы начинаются, когда двое (или больше) делают что-то одновременно.
+
+### Что это значит на практике
+
+- **Любая map, к которой могут обратиться две горутины — под мьютексом.**
+  Go убивает процесс при `concurrent map writes`, recover не спасает.
+- **Любой синглтон** (`sync.Once`, глобальные managers) — потенциальный источник гонок.
+- **Общие рандомы** (`*rand.Rand` на уровне пакета) не потокобезопасны.
+  Мьютекс или локальный `rand.New(...)` на каждый вызов.
+- **Сторонние библиотеки** могут быть не потокобезопасны (gorilla/websocket —
+  только одна горутина на запись в соединение).
+- **Проверка + действие** должны быть атомарными (`TryStart` вместо `if running + Start`).
+- **Долгие операции** (генерация, bcrypt) увеличивают окно гонки.
+
+### Что уже защищено
+
+| Компонент | Защита |
+|-----------|--------|
+| `PlanetGenerator.cache/cacheOrder/rand` | `sync.Mutex` |
+| `WebSocketHub.clients` + запись в conn | Глобальный `RWMutex` + per-connection мьютекс |
+| `TravelManager.flights` | `RWMutex` + проверка `current == flight` |
+| `StatusManager.jobs` | `RWMutex` + `TryStart` |
+| `CompatibilityMatrix` (кеш) | `RWMutex` |
+| `archetypeCache` | Только чтение после инициализации |
+| `jwtSecret` | `RWMutex` + `InitJWTSecret` |
+| `descriptionsManager` (описания планет) | `RWMutex` |
+| `*sql.DB` (везде) | Потокобезопасен «из коробки» |
+
+### Что ещё не защищено (известные долги)
+
+- `Register` в `auth_handlers.go` — race между `GetByUsername` и `Create`
+  (БД защищает через `UNIQUE`, но возвращается 500 вместо 409).
+- `planet_image.go` — кэш пишется, но не читается. Когда добавим чтение —
+  обязательно под мьютексом.
+- **Кеш аномалий** (когда появится Go-код для чтения `config/anomalies/`) —
+  под `RWMutex`, только чтение после инициализации. Загружать один раз при старте,
+  при ошибке чтения JSON — валить сервер явно (`log.Fatal`).
+- Не проверено: `internal/generator/faction/faction.go`,
+  `internal/generator/galaxy/galaxy.go` (при параллельной генерации).
+
+### Как проверять при разработке
+
+- Перед мержем **любой** правки, где появляется `var x = map[...]` на уровне пакета —
+  спросить: «а если два игрока одновременно?».
+- Перед мержем **любой** правки с `go func()` — подумать о разделяемом состоянии.
+- Раз в N задач — перечитывать `go vet -race` (когда появится CI).
+- При первом баге «сервер упал у игрока» — в первую очередь смотреть на map и горутины.
+
+---
+
+## 1. Структура проекта
+
+```
+cmd/server/main.go                       — точка входа
+internal/generator/galaxy/               — генерация миров (Пуассон + кластеры)
+internal/generator/planet/               — планеты, композиция, физика, ядро, описания
+internal/generator/planet/descriptions_*.go — система описаний планет (6 файлов)
+internal/audit/                          — движок аудита (Run[T])
+internal/audit/planet/                   — 43 правила проверки планет
+internal/resource/                       — 6 категорий ресурсов
+internal/names/                          — генераторы имён
+internal/handlers/                       — HTTP-хендлеры
+internal/models/                         — модели БД
+internal/repository/                     — репозитории
+internal/auth/                           — JWT, middleware
+internal/travel/                         — TravelManager (полёты)
+internal/config/                         — загрузка конфига из env
+config/planet_archetypes.json            — архетипы планет
+config/compatibility_defaults.json       — дефолты матрицы совместимости
+config/anomalies/                        — библиотека аномалий (22 файла)
+config/descriptions/                     — библиотека описаний планет (11 типов)
+migrations/                              — SQL-миграции (numbered, up/down)
+web/                                     — фронтенд (HTML, CSS, JS, ES-модули)
+web/static/js/map/                       — модули карты (canvas, кластеризация)
+docs/gamedesign/                         — GDD (9 файлов)
+```
+
+---
+
+## 2. Ключевые файлы и где что лежит
+
+| Что | Где |
+|-----|-----|
+| Точка входа | `cmd/server/main.go` |
+| Генераторы миров | `internal/generator/galaxy/` |
+| Генераторы планет | `internal/generator/planet/` |
+| Система описаний | `internal/generator/planet/descriptions_*.go` |
+| Композиция планет | `internal/generator/planet/composition_*.go` |
+| Физика температуры | `internal/generator/planet/physics.go` |
+| Ядро планеты | `internal/generator/planet/core.go` |
+| Классификация | `internal/generator/planet/classify.go` |
+| Газовые гиганты | `internal/generator/planet/planet_data_gas.go` |
+| Аудит | `internal/audit/` + `internal/audit/planet/` |
+| Ресурсы | `internal/resource/` |
+| Имена | `internal/names/` |
+| HTTP-хендлеры | `internal/handlers/` |
+| Фильтр миров для карты | `internal/handlers/filter_worlds_handler.go` |
+| Мир по ID | `internal/handlers/world_handlers.go` |
+| Модели | `internal/models/` |
+| Репозитории | `internal/repository/` |
+| JWT | `internal/auth/jwt.go`, `internal/auth/middleware.go` |
+| Миграции | `migrations/` |
+| Архетипы планет | `config/planet_archetypes.json` |
+| Матрица дефолтов | `config/compatibility_defaults.json` |
+| Аномалии | `config/anomalies/<code>.json` |
+| Описания планет | `config/descriptions/<type>/<openings\|closings>_NN.json` |
+| Фронтенд | `web/` |
+| Карта миров | `web/static/js/map/` |
+| GDD | `docs/gamedesign/` |
+| Текущий статус | `STATUS.md` |
+| История | `CHANGELOG.md` |
+
+---
+
+## 3. Описания планет — архитектура подсистемы
+
+Более детально — в `docs/DESCRIPTIONS_WORK.md`. Здесь — только карта файлов.
+
+**Файлы `internal/generator/planet/descriptions_*.go`:**
+
+| Файл | Что |
+|------|-----|
+| `descriptions_types.go` | `Opening`, `Closing`, `DescriptionContext`, `descriptionsManager` |
+| `descriptions_tags.go` | Вычисление тегов из контекста планеты |
+| `descriptions_load.go` | Автопоиск JSON-файлов при старте, загрузка в память |
+| `descriptions_pick.go` | Фильтрация по тегам и выбор по хэшу (FNV-1a) |
+| `descriptions_manager.go` | Точка входа `GenerateDescription`, склейка, fallback |
+| `descriptions_mapping.go` | Маппинг «геймдизайнерский тип → папка» |
+
+**Инициализация:** `main.go` вызывает `planet.LoadDescriptionsGlobal("config/descriptions")`.
+При ошибке — `log.Fatal`, сервер не стартует.
+
+**Где вызывается:** `planet_data_generate.go`, `planet_data_gas.go` — при генерации
+планеты. Результат пишется в JSON планеты, в поле `description`.
+
+---
+
+## 4. Миграции БД
+
+Папка `migrations/`. Формат: `NNN_name.up.sql` / `NNN_name.down.sql`.
+
+**Важно:** миграции **не применяются автоматически**. Их выполняет пользователь
+вручную через psql/DBeaver. Поэтому в SQL-файлах используется `IF NOT EXISTS`
+там, где это возможно — на случай, если уже применено.
+
+Список применённых миграций — в `STATUS.md` (раздел «Схема БД»).
+
+---
+
+## 5. Фронтенд — структура карты
+
+```
+web/static/js/
+├── config.js              — глобальный CONFIG (настройки карты, UI)
+├── main.js                — точка входа карты, init
+├── filters.js             — панель фильтров
+├── modal/                 — модалка системы (tabs, panel, index)
+└── map/
+    ├── config.js          — state и elements
+    ├── data.js            — загрузка кластеров, /me, loadUserData
+    ├── events.js          — hover, click, pan, zoom
+    ├── map_render.js      — draw, отрисовка кластеров и одиночных звёзд
+    ├── navigation.js      — centerOnAgent
+    ├── animation.js       — animationLoop (только во время полёта)
+    └── utils.js           — worldToCanvas, getStarColor
+```
+
+**Как работает карта (серверная кластеризация):**
+- Клиент присылает `x_min/x_max/y_min/y_max/cell` в `/api/worlds/filter`.
+- Сервер делает `GROUP BY` по ячейкам, отдаёт 100–5000 кластеров.
+- Клиент рисует кружки с числами (кластеры) и звёзды (одиночные миры).
+- При zoom/pan — debounced перезапрос (180 мс).
+
+---
+
+*Обновляется при изменении структуры кода или правил конкурентности.*
