@@ -16,15 +16,25 @@ type PlanetStats struct {
 	PlanetsBySpectral map[string]map[string]int `json:"planets_by_spectral"`
 	GameDesignTypes   map[string]int            `json:"game_design_types"`
 
-	// Поверхность: сколько планет содержит форму (count) и суммарная доля (share).
+	// Поверхность
 	SurfaceFormCounts map[string]int     `json:"surface_form_counts"`
 	SurfaceFormShares map[string]float64 `json:"surface_form_shares"`
 	SurfaceFormAvg    map[string]float64 `json:"surface_form_avg"`
 
-	// Недра: аналогично.
+	// Недра
 	SubterrainCounts map[string]int     `json:"subterrain_counts"`
 	SubterrainShares map[string]float64 `json:"subterrain_shares"`
 	SubterrainAvg    map[string]float64 `json:"subterrain_avg"`
+
+	// Ядра
+	CoreTypeCounts        map[string]int `json:"core_type_counts"`
+	ActiveCoreCount       int            `json:"active_core_count"`
+	MetallicCoreCount     int            `json:"metallic_core_count"`
+	RadioactiveCoreCount  int            `json:"radioactive_core_count"`
+	AvgCoreMassPercent    float64        `json:"avg_core_mass_percent"`
+	AvgCoreActivity       float64        `json:"avg_core_activity"`
+	AvgCoreRadioactivity  float64        `json:"avg_core_radioactivity"`
+	AvgSystemAge          float64        `json:"avg_system_age"`
 
 	HydrosphereCount map[string]int `json:"hydrosphereCount"`
 	AtmosphereCount  map[string]int `json:"atmosphereCount"`
@@ -101,6 +111,7 @@ func newPlanetStats() *PlanetStats {
 		SubterrainCounts:  make(map[string]int),
 		SubterrainShares:  make(map[string]float64),
 		SubterrainAvg:     make(map[string]float64),
+		CoreTypeCounts:    make(map[string]int),
 		HydrosphereCount:  make(map[string]int),
 		AtmosphereCount:   make(map[string]int),
 		BiosphereCount:    make(map[string]int),
@@ -109,9 +120,6 @@ func newPlanetStats() *PlanetStats {
 }
 
 // applyFormAverages — считает средний процент каждой формы по всем планетам.
-//
-// Средний % = сумма долей / TotalPlanets. Это то, что показываем в UI
-// как «в среднем X% поверхности галактики».
 func applyFormAverages(stats *PlanetStats) {
 	if stats.TotalPlanets == 0 {
 		return

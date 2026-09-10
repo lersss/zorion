@@ -46,11 +46,18 @@ func NewGenerator(db *sql.DB, seed int64) *Generator {
 }
 
 // GeneratePlanetsForWorld — генерирует все планеты мира и сохраняет их в БД.
+//
+// Параметр temperature (температура звезды) больше не используется —
+// новая физика считает температуру планеты от светимости звезды и орбиты.
+// Оставлен для обратной совместимости с хендлером.
 func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, temperature int) (int, error) {
 	planetCount := g.determinePlanetCount(spectralClass)
 	if planetCount == 0 {
 		return 0, nil
 	}
+
+	// Возраст системы — один на все планеты мира
+	systemAge := determineSystemAge(spectralClass, g.rng)
 
 	tx, err := g.db.Begin()
 	if err != nil {
@@ -62,7 +69,7 @@ func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, tempe
 
 	for i := 0; i < planetCount; i++ {
 		orbitIndex := i + 1
-		planet := g.generatePlanet(worldID, orbitIndex, spectralClass, temperature)
+		planet := g.generatePlanet(worldID, orbitIndex, spectralClass, systemAge)
 		batch.addPlanet(planet)
 
 		if err := g.collectEconomy(
@@ -88,7 +95,6 @@ func (g *Generator) GeneratePlanetsForWorld(worldID, spectralClass string, tempe
 
 // ==================== БАТЧ-БУФЕР ====================
 
-// batchBuffers — буферы для батч-вставки всех сущностей планеты.
 type batchBuffers struct {
 	planetRows     []interface{}
 	settlementRows []interface{}
@@ -97,7 +103,6 @@ type batchBuffers struct {
 	resourceRows   []interface{}
 }
 
-// newBatchBuffers — создаёт буферы с предварительным capacity.
 func newBatchBuffers(planetCount int) *batchBuffers {
 	return &batchBuffers{
 		planetRows:     make([]interface{}, 0, planetCount),
@@ -108,7 +113,6 @@ func newBatchBuffers(planetCount int) *batchBuffers {
 	}
 }
 
-// addPlanet — добавляет строку планеты в буфер.
 func (b *batchBuffers) addPlanet(p *PlanetData) {
 	b.planetRows = append(b.planetRows, []interface{}{
 		p.ID,
@@ -121,7 +125,6 @@ func (b *batchBuffers) addPlanet(p *PlanetData) {
 	})
 }
 
-// flushBatch — записывает все буферы в БД в одной транзакции.
 func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
 	if err := g.batchInsertPlanets(tx, b.planetRows); err != nil {
 		return err
@@ -151,13 +154,6 @@ func (g *Generator) flushBatch(tx *sql.Tx, b *batchBuffers) error {
 
 // ==================== РЕСУРСЫ ====================
 
-// collectResources — генерирует ресурсы для планеты и добавляет их в буфер.
-//
-// Извлекает из JSON планеты:
-//   - surface_dominant — доминирующая форма поверхности;
-//   - subterrain_composition — композиция недр.
-//
-// Газовые гиганты пропускаются — у них нет ни поверхности, ни недр.
 func (g *Generator) collectResources(
 	planetID string,
 	dataJSON []byte,
@@ -209,7 +205,6 @@ func (g *Generator) collectResources(
 	}
 }
 
-// extractSubterrainComposition — вытаскивает композицию недр из JSON планеты.
 func extractSubterrainComposition(data map[string]interface{}) map[string]float64 {
 	result := map[string]float64{}
 	raw, ok := data["subterrain_composition"].(map[string]interface{})
@@ -247,7 +242,6 @@ func getBool(data map[string]interface{}, key string) bool {
 	return false
 }
 
-// composeToJSON — сериализует Composition в map для JSON-поля.
 func composeToJSON(c Composition) map[string]float64 {
 	if c == nil {
 		return map[string]float64{}
@@ -259,7 +253,6 @@ func composeToJSON(c Composition) map[string]float64 {
 	return out
 }
 
-// uuidShort — короткий UUID для fallback-имён.
 func uuidShort() string {
 	return uuid.New().String()[:8]
 }

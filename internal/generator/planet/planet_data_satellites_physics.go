@@ -9,17 +9,27 @@ import (
 // ==================== ФИЗИКА СПУТНИКОВ ====================
 
 // computeSatelliteTemp — температура спутника.
-// Основной вклад — нагрев от газового гиганта + приливный нагрев.
+//
+// Основной вклад — нагрев от газового гиганта (внутренний + приливный).
+// Остаточный нагрев от звезды мал (спутники далеко от неё).
+//
+// Формула:
+//
+//	internal = giantTemp × 0.3                (внутреннее тепло гиганта)
+//	tidal    = 400 / orbitIndex³              (приливный нагрев)
+//	temp     = clamp(internal + tidal, 20, 1200)
 func computeSatelliteTemp(giantTemp float64, orbitIndex int) float64 {
-	// Внутренний нагрев гиганта (~30% его температуры)
-	internal := giantTemp * 0.3
+	if orbitIndex < 1 {
+		orbitIndex = 1
+	}
 
-	// Приливный нагрев — обратно пропорционален кубу расстояния
+	internal := giantTemp * 0.3
 	tidal := 400.0 / math.Pow(float64(orbitIndex), 3)
 
 	temp := internal + tidal
-	if temp < 30 {
-		temp = 30
+
+	if temp < TempAbsoluteMin {
+		temp = TempAbsoluteMin
 	}
 	if temp > 1200 {
 		temp = 1200
@@ -28,6 +38,12 @@ func computeSatelliteTemp(giantTemp float64, orbitIndex int) float64 {
 }
 
 // computeSatelliteWater — вода на спутнике.
+//
+// Зависит от температуры:
+//   - > 400 K — вода испарилась;
+//   - 250–400 K — жидкая вода;
+//   - 180–250 K — лёд + подлёдный океан;
+//   - < 180 K — сплошной лёд.
 func computeSatelliteWater(temp float64, rng *rand.Rand) float64 {
 	switch {
 	case temp > 400:
@@ -44,8 +60,9 @@ func computeSatelliteWater(temp float64, rng *rand.Rand) float64 {
 }
 
 // pickSatelliteAtmosphere — тип атмосферы спутника.
+//
+// У спутников атмосфера — редкость. Если есть — соответствует температуре.
 func pickSatelliteAtmosphere(temp float64, rng *rand.Rand) string {
-	// У спутников атмосфера — редкость
 	if rng.Float64() < 0.4 {
 		return "разряженная"
 	}
@@ -67,17 +84,21 @@ func pickSatelliteAtmosphere(temp float64, rng *rand.Rand) string {
 // ==================== КОМПОЗИЦИИ СПУТНИКОВ ====================
 
 // generateSatelliteSurface — композиция поверхности спутника.
-func generateSatelliteSurface(temp, waterPercent float64, orbitIndex int, rng *rand.Rand) Composition {
+func generateSatelliteSurface(
+	temp, waterPercent float64,
+	orbitIndex int,
+	rng *rand.Rand,
+) Composition {
 	c := map[string]float64{
-		SurfaceRocks:           30,
-		SurfaceCraters:         20,
-		SurfaceGlaciers:        0,
-		SurfaceFrozenGases:     0,
-		SurfaceOceans:          0,
-		SurfaceLakes:           0,
-		SurfaceVolcanicFields:  0,
-		SurfaceLavaFields:      0,
-		SurfaceSands:           10,
+		SurfaceRocks:          30,
+		SurfaceCraters:        20,
+		SurfaceGlaciers:       0,
+		SurfaceFrozenGases:    0,
+		SurfaceOceans:         0,
+		SurfaceLakes:          0,
+		SurfaceVolcanicFields: 0,
+		SurfaceLavaFields:     0,
+		SurfaceSands:          10,
 	}
 
 	switch {
@@ -123,23 +144,26 @@ func generateSatelliteSurface(temp, waterPercent float64, orbitIndex int, rng *r
 		c[k] = v * (0.8 + rng.Float64()*0.4)
 	}
 
-	// Разрешаем конфликты
 	c = resolveConflicts("surface", c, c, rng)
 
 	return Composition(c).Normalize().NonZero()
 }
 
 // generateSatelliteSubterrain — композиция недр спутника.
-func generateSatelliteSubterrain(temp float64, surface Composition, rng *rand.Rand) Composition {
+func generateSatelliteSubterrain(
+	temp float64,
+	surface Composition,
+	rng *rand.Rand,
+) Composition {
 	c := map[string]float64{
-		SubterrainEmptyRock:     30,
-		SubterrainMagmaticRocks: 15,
-		SubterrainOreVeins:      15,
-		SubterrainGroundIce:     0,
-		SubterrainGroundwater:   0,
-		SubterrainMagmaChambers: 0,
-		SubterrainMetalCores:    10,
-		SubterrainCrystalVeins:  10,
+		SubterrainEmptyRock:       30,
+		SubterrainMagmaticRocks:   15,
+		SubterrainOreVeins:        15,
+		SubterrainGroundIce:       0,
+		SubterrainGroundwater:     0,
+		SubterrainMagmaChambers:   0,
+		SubterrainMetalCores:      10,
+		SubterrainCrystalVeins:    10,
 	}
 
 	switch {
@@ -169,7 +193,14 @@ func generateSatelliteSubterrain(temp float64, surface Composition, rng *rand.Ra
 // ==================== ЖИЗНЬ И ОПИСАНИЕ ====================
 
 // determineSatelliteLife — есть ли жизнь на спутнике.
-func determineSatelliteLife(temp, waterPercent float64, surface Composition, rng *rand.Rand) bool {
+//
+// Ключевое условие: подлёдный океан при умеренной T.
+// Шанс 15% — жизнь на спутниках редкость.
+func determineSatelliteLife(
+	temp, waterPercent float64,
+	surface Composition,
+	rng *rand.Rand,
+) bool {
 	if waterPercent < 20 {
 		return false
 	}

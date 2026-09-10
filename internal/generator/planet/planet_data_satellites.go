@@ -11,7 +11,7 @@ import (
 type Satellite struct {
 	ID                    string
 	Name                  string
-	OrbitIndex            int // порядковый номер вокруг гиганта (1 = ближайший)
+	OrbitIndex            int
 	Size                  float64
 	Mass                  float64
 	Temperature           float64

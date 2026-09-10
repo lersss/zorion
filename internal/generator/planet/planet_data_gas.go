@@ -10,11 +10,15 @@ import (
 
 // generateGasGiant — газовый гигант. У него нет композиции поверхности
 // (только атмосфера), но есть спутники — каждый полноценная локация.
+//
+// Ядро есть (металлическое, по массе), но при расчёте температуры
+// поверхности оно игнорируется (SkipInternal = true): газовый гигант
+// греется в основном за счёт сжатия и внутренних процессов.
 func (g *Generator) generateGasGiant(
 	worldID string,
 	orbitIndex int,
 	spectralClass string,
-	starTemp int,
+	systemAge float64,
 ) *PlanetData {
 	name := names.GeneratePlanetName(g.rng, g.usedNames)
 	if name == "" {
@@ -27,23 +31,39 @@ func (g *Generator) generateGasGiant(
 	atmospheres := []string{"водородно-гелиевая", "водородная", "гелиевая"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
 
-	// Физическая температура: эффективная + внутренний нагрев
-	baseTemp := computeEffectiveTemp(starTemp, orbitIndex, spectralClass)
-	temp := baseTemp*(0.9+g.rng.Float64()*0.2) + 30
+	// --- ФИЗИЧЕСКАЯ ТЕМПЕРАТУРА ---
+	// Равновесная от звезды + внутренний нагрев от сжатия (не от ядра).
+	luminosity := luminosityBySpectral(spectralClass)
+	orbitRadius := orbitRadiusByIndex(orbitIndex)
+	tEq := computeEquilibriumTemp(luminosity, orbitRadius)
 
-	// Количество спутников: 3–10
+	// Газовый гигант горячее, чем T_eq — за счёт внутреннего сжатия.
+	// Greenhouse уже учтён в атмосфере (1.8–1.9), добавляем +30 K.
+	greenhouse := computeGreenhouse(atmosphere)
+	temp := tEq*greenhouse + 30
+
+	if temp > TempAbsoluteMax {
+		temp = TempAbsoluteMax
+	}
+	if temp < TempAbsoluteMin {
+		temp = TempAbsoluteMin
+	}
+
+	// --- ЯДРО ---
+	// Генерируем для полноты (флаг is_metallic, для будущих механик),
+	// но в расчёте температуры не используем.
+	emptySubterrain := Composition{}
+	core := GenerateCore(mass, "hot", emptySubterrain, systemAge, g.rng)
+
+	// --- СПУТНИКИ ---
 	satelliteCount := 3 + g.rng.Intn(8)
-
-	// Генерируем спутники
 	satellites := g.generateSatellites(satelliteCount, size, temp, spectralClass)
 
-	// Сериализуем спутники в JSON
 	satellitesJSON := make([]map[string]interface{}, 0, len(satellites))
 	for _, sat := range satellites {
 		satellitesJSON = append(satellitesJSON, satelliteToMap(sat))
 	}
 
-	// Ресурсы газового гиганта (атмосферные)
 	resources := map[string]float64{
 		"энергия": 0.7 + g.rng.Float64()*0.3,
 		"редкие":  0.5 + g.rng.Float64()*0.5,
@@ -66,13 +86,14 @@ func (g *Generator) generateGasGiant(
 		"moons":             satelliteCount,
 		"development_level": 0.0,
 		"climate":           "hot",
+		"system_age":        systemAge,
 		"is_gas_giant":      true,
 		"resources":         resources,
 		"satellites":        satellitesJSON,
-		// Обратная совместимость: dominant = "газовый_гигант"
-		"surface_dominant": "газовый_гигант",
-		"type":             "газовый гигант",
-		"description":      "Огромная планета из водорода и гелия с множеством спутников.",
+		"surface_dominant":  "газовый_гигант",
+		"type":              "газовый гигант",
+		"core":              coreToJSON(core),
+		"description":       "Огромная планета из водорода и гелия с множеством спутников.",
 	}
 	dataJSON, _ := json.Marshal(data)
 

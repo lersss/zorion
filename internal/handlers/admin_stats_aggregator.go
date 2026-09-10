@@ -19,6 +19,13 @@ type statsAggregator struct {
 	tempCount  int
 	waterCount int
 	popCount   int
+
+	// Ядра
+	totalCoreMassPercent   float64
+	totalCoreActivity      float64
+	totalCoreRadioactivity float64
+	totalSystemAge         float64
+	coreCount              int
 }
 
 // newStatsAggregator — создаёт агрегатор с индексом миров.
@@ -66,19 +73,22 @@ func (a *statsAggregator) processOne(p planetRecord, stats *PlanetStats) {
 	incrementIfPresent(stats.AtmosphereCount, getString(p.Data, "atmosphere"))
 	incrementIfPresent(stats.BiosphereCount, getString(p.Data, "biosphere"))
 
-	// Композиция поверхности: count (наличие) + share (суммарный %)
+	// Композиция поверхности
 	surface := extractComposition(p.Data, "surface_composition")
 	for form, share := range surface {
 		stats.SurfaceFormCounts[form]++
 		stats.SurfaceFormShares[form] += share
 	}
 
-	// Композиция недр: count + share
+	// Композиция недр
 	subterrain := extractComposition(p.Data, "subterrain_composition")
 	for subType, share := range subterrain {
 		stats.SubterrainCounts[subType]++
 		stats.SubterrainShares[subType] += share
 	}
+
+	// Ядро
+	a.accumulateCore(p.Data, stats)
 
 	// Геймдизайнерский тип
 	in := buildClassificationInput(p.Data, surface)
@@ -95,6 +105,40 @@ func (a *statsAggregator) processOne(p planetRecord, stats *PlanetStats) {
 
 	// Средние
 	a.accumulateAverages(p.Data)
+}
+
+// accumulateCore — обрабатывает поле core из JSON планеты.
+func (a *statsAggregator) accumulateCore(data map[string]interface{}, stats *PlanetStats) {
+	coreRaw, ok := data["core"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	coreType := getString(coreRaw, "type")
+	if coreType != "" {
+		stats.CoreTypeCounts[coreType]++
+	}
+
+	if getBool(coreRaw, "is_active") {
+		stats.ActiveCoreCount++
+	}
+	if getBool(coreRaw, "is_metallic") {
+		stats.MetallicCoreCount++
+	}
+
+	radioactivity := getFloat(coreRaw, "radioactivity")
+	if radioactivity > 50 {
+		stats.RadioactiveCoreCount++
+	}
+
+	// Средние по ядру
+	a.totalCoreMassPercent += getFloat(coreRaw, "mass_percent")
+	a.totalCoreActivity += getFloat(coreRaw, "activity")
+	a.totalCoreRadioactivity += radioactivity
+
+	// Возраст системы — из планеты, а не из ядра (но совпадает)
+	a.totalSystemAge += getFloat(data, "system_age")
+	a.coreCount++
 }
 
 // accumulateAverages — накапливает суммы и счётчики для средних.
@@ -137,5 +181,12 @@ func (a *statsAggregator) applyAverages(stats *PlanetStats) {
 	}
 	if a.popCount > 0 {
 		stats.AvgPopulation = a.totalPopulation / int64(a.popCount)
+	}
+	if a.coreCount > 0 {
+		n := float64(a.coreCount)
+		stats.AvgCoreMassPercent = a.totalCoreMassPercent / n
+		stats.AvgCoreActivity = a.totalCoreActivity / n
+		stats.AvgCoreRadioactivity = a.totalCoreRadioactivity / n
+		stats.AvgSystemAge = a.totalSystemAge / n
 	}
 }

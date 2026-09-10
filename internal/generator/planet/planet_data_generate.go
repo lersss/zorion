@@ -3,13 +3,13 @@ package planet
 
 import (
 	"encoding/json"
-	"math"
+	"math/rand"
 
 	"github.com/google/uuid"
 	"zorion/internal/names"
 )
 
-// determinePlanetCount — сколько планет у звезды данного класса
+// determinePlanetCount — сколько планет у звезды данного класса.
 func (g *Generator) determinePlanetCount(spectralClass string) int {
 	switch spectralClass {
 	case "O", "B", "A":
@@ -23,55 +23,50 @@ func (g *Generator) determinePlanetCount(spectralClass string) int {
 	}
 }
 
-// computeEffectiveTemp — физическая температура планеты.
-// Формула: T_eff = T_star * (1 / (r^2 * L))^0.25
-// где r = 0.4 * 1.7^orbitIndex, L — светимость в солнечных единицах.
-func computeEffectiveTemp(starTemp int, orbitIndex int, spectralClass string) float64 {
-	luminosityMap := map[string]float64{
-		"O": 1000, "B": 100, "A": 10, "F": 2, "G": 1,
-		"K": 0.1, "M": 0.01, "L": 0.001, "T": 0.0001, "Y": 0.00001,
+// determineSystemAge — возраст звёздной системы в млрд лет.
+//
+// Зависит от спектрального класса: горячие O/B — молодые,
+// холодные M — старые (вселенной ещё мало времени прошло).
+func determineSystemAge(spectralClass string, rng *rand.Rand) float64 {
+	switch spectralClass {
+	case "O", "B":
+		return 0.1 + rng.Float64()*0.9 // 0.1–1
+	case "A":
+		return 0.3 + rng.Float64()*1.7 // 0.3–2
+	case "F":
+		return 1.0 + rng.Float64()*2.0 // 1–3
+	case "G":
+		return 2.0 + rng.Float64()*6.0 // 2–8
+	case "K":
+		return 4.0 + rng.Float64()*7.0 // 4–11
+	case "M":
+		return 6.0 + rng.Float64()*7.0 // 6–13
+	case "L", "T", "Y":
+		return 5.0 + rng.Float64()*8.0
+	default:
+		return 2.0 + rng.Float64()*8.0
 	}
-	L := luminosityMap[spectralClass]
-	if L <= 0 {
-		L = 1.0
-	}
-	r := 0.4 * math.Pow(1.7, float64(orbitIndex))
-	if r <= 0 {
-		r = 0.4
-	}
-	ratio := 1.0 / (r * r * L)
-	if ratio < 0 {
-		ratio = 0
-	}
-	T := float64(starTemp) * math.Pow(ratio, 0.25)
-	if T < 10 {
-		T = 10
-	}
-	if T > 5000 {
-		T = 5000
-	}
-	return T
 }
 
 // ==================== ОБЫЧНАЯ ПЛАНЕТА ====================
 
-// generatePlanet — обычная планета на основе архетипа.
+// generatePlanet — планета на основе архетипа (или спец-тип).
 func (g *Generator) generatePlanet(
 	worldID string,
 	orbitIndex int,
 	spectralClass string,
-	starTemp int,
+	systemAge float64,
 ) *PlanetData {
-	// --- ГАЗОВЫЙ ГИГАНТ (для горячих звёзд на дальних орбитах) ---
+	// --- ГАЗОВЫЙ ГИГАНТ ---
 	if (spectralClass == "O" || spectralClass == "B" || spectralClass == "A") && orbitIndex >= 3 {
 		if g.rng.Float64() < 0.8 {
-			return g.generateGasGiant(worldID, orbitIndex, spectralClass, starTemp)
+			return g.generateGasGiant(worldID, orbitIndex, spectralClass, systemAge)
 		}
 	}
 
 	// --- ОКЕАНИЧЕСКАЯ ПЛАНЕТА (2.5%) ---
 	if g.rng.Float64() < 0.025 {
-		return g.generateOceanicPlanet(worldID, orbitIndex, spectralClass, starTemp)
+		return g.generateOceanicPlanet(worldID, orbitIndex, spectralClass, systemAge)
 	}
 
 	// --- РАДИОАКТИВНАЯ ПЛАНЕТА (1.5%, для горячих 3%) ---
@@ -81,12 +76,12 @@ func (g *Generator) generatePlanet(
 		chance = 0.03
 	}
 	if g.rng.Float64() < chance {
-		return g.generateRadioactivePlanet(worldID, orbitIndex, spectralClass, starTemp)
+		return g.generateRadioactivePlanet(worldID, orbitIndex, spectralClass, systemAge)
 	}
 
 	// --- СТАНДАРТНАЯ ГЕНЕРАЦИЯ ЧЕРЕЗ АРХЕТИП ---
 	archetype := GenerateArchetype(spectralClass, g.rng)
-	props := GenerateProperties(archetype, orbitIndex, spectralClass, starTemp, g.rng)
+	props := GenerateProperties(archetype, orbitIndex, spectralClass, systemAge, g.rng)
 
 	name := names.GeneratePlanetName(g.rng, g.usedNames)
 	if name == "" {
@@ -99,7 +94,6 @@ func (g *Generator) generatePlanet(
 	}
 
 	data := map[string]interface{}{
-		// Основные параметры
 		"size":              props.Size,
 		"mass":              props.Mass,
 		"atmosphere":        props.Atmosphere,
@@ -115,17 +109,15 @@ func (g *Generator) generatePlanet(
 		"moons":             props.Moons,
 		"development_level": props.Development,
 		"climate":           archetype.Climate,
+		"system_age":        systemAge,
 
-		// Композиции
 		"surface_composition":    composeToJSON(props.SurfaceComposition),
 		"subterrain_composition": composeToJSON(props.SubterrainComposition),
 		"surface_dominant":       dominant,
-		"type":                   dominant, // для обратной совместимости
+		"type":                   dominant,
+		"core":                   coreToJSON(props.Core),
 
-		// Описание
-		"description": generateDescription(
-			g.rng, dominant, props.Habitable, props.Life,
-		),
+		"description": generateDescription(g.rng, dominant, props.Habitable, props.Life),
 	}
 
 	dataJSON, _ := json.Marshal(data)
@@ -145,7 +137,7 @@ func (g *Generator) generateOceanicPlanet(
 	worldID string,
 	orbitIndex int,
 	spectralClass string,
-	starTemp int,
+	systemAge float64,
 ) *PlanetData {
 	name := names.GeneratePlanetName(g.rng, g.usedNames)
 	if name == "" {
@@ -161,7 +153,6 @@ func (g *Generator) generateOceanicPlanet(
 	life := g.rng.Float64() < 0.7
 	habitable := life
 
-	// Композиция поверхности — океаны доминируют
 	surfaceComp := Composition{
 		SurfaceOceans:     60 + g.rng.Float64()*15,
 		SurfaceLakes:      5 + g.rng.Float64()*10,
@@ -170,7 +161,6 @@ func (g *Generator) generateOceanicPlanet(
 		SurfaceCoralReefs: 3 + g.rng.Float64()*7,
 	}.Normalize().NonZero()
 
-	// Недра — осадочные, нефть, соляные купола
 	subterrainComp := Composition{
 		SubterrainSedimentaryRocks: 30,
 		SubterrainOilPockets:       15,
@@ -179,6 +169,9 @@ func (g *Generator) generateOceanicPlanet(
 		SubterrainOreVeins:         15,
 		SubterrainEmptyRock:        10,
 	}.Normalize().NonZero()
+
+	// Ядро — обычное, климат умеренный
+	core := GenerateCore(mass, "temperate", subterrainComp, systemAge, g.rng)
 
 	var population int64 = 0
 	political := "нет"
@@ -209,10 +202,12 @@ func (g *Generator) generateOceanicPlanet(
 		"moons":                  int(size / 5),
 		"development_level":      0.0,
 		"climate":                "temperate",
+		"system_age":             systemAge,
 		"surface_composition":    composeToJSON(surfaceComp),
 		"subterrain_composition": composeToJSON(subterrainComp),
 		"surface_dominant":       SurfaceOceans,
 		"type":                   SurfaceOceans,
+		"core":                   coreToJSON(core),
 		"description":            "Планета, почти полностью покрытая океаном. Богатая морская экосистема.",
 	}
 	dataJSON, _ := json.Marshal(data)
@@ -232,7 +227,7 @@ func (g *Generator) generateRadioactivePlanet(
 	worldID string,
 	orbitIndex int,
 	spectralClass string,
-	starTemp int,
+	systemAge float64,
 ) *PlanetData {
 	name := names.GeneratePlanetName(g.rng, g.usedNames)
 	if name == "" {
@@ -246,7 +241,11 @@ func (g *Generator) generateRadioactivePlanet(
 	size := 0.5 + g.rng.Float64()*14.5
 	mass := 0.1 + g.rng.Float64()*19.9
 
-	baseTemp := computeEffectiveTemp(starTemp, orbitIndex, spectralClass)
+	luminosity := luminosityBySpectral(spectralClass)
+	orbitRadius := orbitRadiusByIndex(orbitIndex)
+	baseTemp := computeEquilibriumTemp(luminosity, orbitRadius)
+
+	// Радиоактивная — внутренний нагрев +доп. жар
 	temp := baseTemp + 200 + g.rng.Float64()*200
 	if temp > 1200 {
 		temp = 1200
@@ -258,7 +257,6 @@ func (g *Generator) generateRadioactivePlanet(
 	}
 	life := g.rng.Float64() < 0.05
 
-	// Композиция поверхности
 	surfaceComp := Composition{
 		surface:              50 + g.rng.Float64()*20,
 		SurfaceRocks:         15 + g.rng.Float64()*10,
@@ -266,7 +264,6 @@ func (g *Generator) generateRadioactivePlanet(
 		SurfaceVolcanicFields: 5 + g.rng.Float64()*10,
 	}.Normalize().NonZero()
 
-	// Недра — радиоактивные, металлические ядра
 	subterrainComp := Composition{
 		SubterrainRadioactiveZones: 30,
 		SubterrainMetalCores:       20,
@@ -274,6 +271,9 @@ func (g *Generator) generateRadioactivePlanet(
 		SubterrainMagmaticRocks:    15,
 		SubterrainOreVeins:         15,
 	}.Normalize().NonZero()
+
+	// Ядро — горячее, радиоактивное
+	core := GenerateCore(mass, "extreme", subterrainComp, systemAge, g.rng)
 
 	data := map[string]interface{}{
 		"size":                   size,
@@ -291,11 +291,13 @@ func (g *Generator) generateRadioactivePlanet(
 		"moons":                  int(size / 8),
 		"development_level":      0.0,
 		"climate":                "extreme",
+		"system_age":             systemAge,
 		"radioactive":            true,
 		"surface_composition":    composeToJSON(surfaceComp),
 		"subterrain_composition": composeToJSON(subterrainComp),
 		"surface_dominant":       surface,
 		"type":                   surface,
+		"core":                   coreToJSON(core),
 		"description":            "Планета с высоким радиационным фоном, богатая редкими элементами.",
 	}
 	dataJSON, _ := json.Marshal(data)
@@ -306,5 +308,20 @@ func (g *Generator) generateRadioactivePlanet(
 		Name:       name,
 		OrbitIndex: orbitIndex,
 		Data:       dataJSON,
+	}
+}
+
+// ==================== УТИЛИТЫ ====================
+
+// coreToJSON — сериализует ядро для JSON-поля.
+func coreToJSON(c Core) map[string]interface{} {
+	return map[string]interface{}{
+		"type":          c.Type,
+		"mass_percent":  c.MassPercent,
+		"activity":      c.Activity,
+		"radioactivity": c.Radioactivity,
+		"age":           c.Age,
+		"is_active":     c.IsActive(),
+		"is_metallic":   c.IsMetallic(),
 	}
 }
