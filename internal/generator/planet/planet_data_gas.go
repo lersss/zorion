@@ -3,6 +3,7 @@ package planet
 
 import (
 	"encoding/json"
+	"math"
 
 	"github.com/google/uuid"
 	"zorion/internal/names"
@@ -25,8 +26,14 @@ func (g *Generator) generateGasGiant(
 		name = "Газовый гигант-" + uuidShort()
 	}
 
-	size := 8 + g.rng.Float64()*20
-	mass := 5 + g.rng.Float64()*15
+	// Масса: 50–300 M⊕ (Юпитер 318, Сатурн 95)
+	mass := 50 + g.rng.Float64()*250
+
+	// Плотность газового гиганта: 0.15–0.25 (в единицах Земли)
+	density := 0.15 + g.rng.Float64()*0.10
+
+	// Размер из массы и плотности
+	size := math.Pow(mass/density, 1.0/3.0)
 
 	atmospheres := []string{"водородно-гелиевая", "водородная", "гелиевая"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
@@ -37,8 +44,6 @@ func (g *Generator) generateGasGiant(
 	orbitRadius := orbitRadiusByIndex(orbitIndex)
 	tEq := computeEquilibriumTemp(luminosity, orbitRadius)
 
-	// Газовый гигант горячее, чем T_eq — за счёт внутреннего сжатия.
-	// Greenhouse уже учтён в атмосфере (1.8–1.9), добавляем +30 K.
 	greenhouse := computeGreenhouse(atmosphere)
 	temp := tEq*greenhouse + 30
 
@@ -50,8 +55,6 @@ func (g *Generator) generateGasGiant(
 	}
 
 	// --- ЯДРО ---
-	// Генерируем для полноты (флаг is_metallic, для будущих механик),
-	// но в расчёте температуры не используем.
 	emptySubterrain := Composition{}
 	core := GenerateCore(mass, "hot", emptySubterrain, systemAge, g.rng)
 
@@ -73,6 +76,7 @@ func (g *Generator) generateGasGiant(
 	data := map[string]interface{}{
 		"size":              size,
 		"mass":              mass,
+		"density":           density,
 		"atmosphere":        atmosphere,
 		"hydrosphere":       "сухая",
 		"biosphere":         "стерильная",

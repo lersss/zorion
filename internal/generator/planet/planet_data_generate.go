@@ -24,23 +24,20 @@ func (g *Generator) determinePlanetCount(spectralClass string) int {
 }
 
 // determineSystemAge — возраст звёздной системы в млрд лет.
-//
-// Зависит от спектрального класса: горячие O/B — молодые,
-// холодные M — старые (вселенной ещё мало времени прошло).
 func determineSystemAge(spectralClass string, rng *rand.Rand) float64 {
 	switch spectralClass {
 	case "O", "B":
-		return 0.1 + rng.Float64()*0.9 // 0.1–1
+		return 0.1 + rng.Float64()*0.9
 	case "A":
-		return 0.3 + rng.Float64()*1.7 // 0.3–2
+		return 0.3 + rng.Float64()*1.7
 	case "F":
-		return 1.0 + rng.Float64()*2.0 // 1–3
+		return 1.0 + rng.Float64()*2.0
 	case "G":
-		return 2.0 + rng.Float64()*6.0 // 2–8
+		return 2.0 + rng.Float64()*6.0
 	case "K":
-		return 4.0 + rng.Float64()*7.0 // 4–11
+		return 4.0 + rng.Float64()*7.0
 	case "M":
-		return 6.0 + rng.Float64()*7.0 // 6–13
+		return 6.0 + rng.Float64()*7.0
 	case "L", "T", "Y":
 		return 5.0 + rng.Float64()*8.0
 	default:
@@ -50,7 +47,6 @@ func determineSystemAge(spectralClass string, rng *rand.Rand) float64 {
 
 // ==================== ОБЫЧНАЯ ПЛАНЕТА ====================
 
-// generatePlanet — планета на основе архетипа (или спец-тип).
 func (g *Generator) generatePlanet(
 	worldID string,
 	orbitIndex int,
@@ -96,6 +92,7 @@ func (g *Generator) generatePlanet(
 	data := map[string]interface{}{
 		"size":              props.Size,
 		"mass":              props.Mass,
+		"density":           props.Density,
 		"atmosphere":        props.Atmosphere,
 		"hydrosphere":       archetype.Hydrosphere,
 		"biosphere":         archetype.Biosphere,
@@ -146,8 +143,10 @@ func (g *Generator) generateOceanicPlanet(
 
 	atmospheres := []string{"азотно-кислородная", "плотная"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-	size := 0.8 + g.rng.Float64()*1.2
+
+	// Масса 0.5–3 M⊕
 	mass := 0.5 + g.rng.Float64()*2.5
+
 	temp := 273 + g.rng.Float64()*100
 	waterPercent := 70 + g.rng.Float64()*29
 	life := g.rng.Float64() < 0.7
@@ -170,7 +169,10 @@ func (g *Generator) generateOceanicPlanet(
 		SubterrainEmptyRock:        10,
 	}.Normalize().NonZero()
 
-	// Ядро — обычное, климат умеренный
+	// Плотность океанической — 0.8–1.0, размер из массы
+	density := densityForPlanet(mass, surfaceComp, g.rng)
+	size := computeRadius(mass, density)
+
 	core := GenerateCore(mass, "temperate", subterrainComp, systemAge, g.rng)
 
 	var population int64 = 0
@@ -189,6 +191,7 @@ func (g *Generator) generateOceanicPlanet(
 	data := map[string]interface{}{
 		"size":                   size,
 		"mass":                   mass,
+		"density":                density,
 		"atmosphere":             atmosphere,
 		"hydrosphere":            "океаны",
 		"biosphere":              "растительная",
@@ -238,14 +241,14 @@ func (g *Generator) generateRadioactivePlanet(
 	surface := surfaces[g.rng.Intn(len(surfaces))]
 	atmospheres := []string{"плотная", "ядовитая"}
 	atmosphere := atmospheres[g.rng.Intn(len(atmospheres))]
-	size := 0.5 + g.rng.Float64()*14.5
-	mass := 0.1 + g.rng.Float64()*19.9
+
+	// Масса 0.5–10 M⊕
+	mass := 0.5 + g.rng.Float64()*9.5
 
 	luminosity := luminosityBySpectral(spectralClass)
 	orbitRadius := orbitRadiusByIndex(orbitIndex)
 	baseTemp := computeEquilibriumTemp(luminosity, orbitRadius)
 
-	// Радиоактивная — внутренний нагрев +доп. жар
 	temp := baseTemp + 200 + g.rng.Float64()*200
 	if temp > 1200 {
 		temp = 1200
@@ -272,12 +275,16 @@ func (g *Generator) generateRadioactivePlanet(
 		SubterrainOreVeins:         15,
 	}.Normalize().NonZero()
 
-	// Ядро — горячее, радиоактивное
+	// Плотность выше обычной — металлическая кора
+	density := 1.2 + g.rng.Float64()*0.6
+	size := computeRadius(mass, density)
+
 	core := GenerateCore(mass, "extreme", subterrainComp, systemAge, g.rng)
 
 	data := map[string]interface{}{
 		"size":                   size,
 		"mass":                   mass,
+		"density":                density,
 		"atmosphere":             atmosphere,
 		"hydrosphere":            "сухая",
 		"biosphere":              "стерильная",
