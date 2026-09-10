@@ -14,9 +14,9 @@ import (
 type Archetype struct {
 	ID             string
 	Name           string
-	Climate        string             // id климата (hot/temperate/...)
-	BaseSurface    map[string]float64 // форма → базовый вес (не нормализовано)
-	BaseSubterrain map[string]float64 // тип недр → базовый вес
+	Climate        string
+	BaseSurface    map[string]float64
+	BaseSubterrain map[string]float64
 	Hydrosphere    string
 	Atmosphere     string
 	Biosphere      string
@@ -83,7 +83,6 @@ func GenerateArchetype(spectralClass string, rng *rand.Rand) *Archetype {
 		return fallbackArchetype()
 	}
 
-	// 1. Выбор климата по весам
 	var selectedClimate *ClimateConfig
 	totalWeight := 0.0
 	for i := range archetypeCache.Climates {
@@ -112,12 +111,10 @@ func GenerateArchetype(spectralClass string, rng *rand.Rand) *Archetype {
 		}
 	}
 
-	// 2. Гидросфера / атмосфера / биосфера — одиночный выбор из разрешённых
-	hydro := pickRandom(selectedClimate.AllowedHydrospheres, rng, "сухая")
-	atmo := pickRandom(selectedClimate.AllowedAtmospheres, rng, "разряженная")
-	bio := pickRandom(selectedClimate.AllowedBiospheres, rng, "стерильная")
+	hydro := pickOrFallback(selectedClimate.AllowedHydrospheres, rng, "сухая")
+	atmo := pickOrFallback(selectedClimate.AllowedAtmospheres, rng, "разряженная")
+	bio := pickOrFallback(selectedClimate.AllowedBiospheres, rng, "стерильная")
 
-	// 3. Базовые веса композиции (копируем, чтобы не мутировать кэш)
 	baseSurface := copyWeights(selectedClimate.BaseSurface)
 	baseSubterrain := copyWeights(selectedClimate.BaseSubterrain)
 
@@ -155,12 +152,12 @@ func fallbackArchetype() *Archetype {
 			SurfaceForests: 0.1,
 		},
 		BaseSubterrain: map[string]float64{
-			SubterrainEmptyRock:       0.3,
-			SubterrainMagmaticRocks:   0.15,
+			SubterrainEmptyRock:        0.3,
+			SubterrainMagmaticRocks:    0.15,
 			SubterrainSedimentaryRocks: 0.15,
-			SubterrainOreVeins:        0.15,
-			SubterrainGroundwater:     0.15,
-			SubterrainCrystalVeins:    0.1,
+			SubterrainOreVeins:         0.15,
+			SubterrainGroundwater:      0.15,
+			SubterrainCrystalVeins:     0.1,
 		},
 		Hydrosphere:    "океаны",
 		Atmosphere:     "азотно-кислородная",
@@ -176,22 +173,11 @@ func fallbackArchetype() *Archetype {
 	}
 }
 
-// pickRandom — случайный элемент из списка, либо fallback если пусто
-func pickRandom(items []string, rng *rand.Rand, fallback string) string {
+// pickOrFallback — случайный элемент из списка, либо fallback если пусто.
+// Названа так, чтобы не конфликтовать с pickRandom в planet_image.go.
+func pickOrFallback(items []string, rng *rand.Rand, fallback string) string {
 	if len(items) == 0 {
 		return fallback
 	}
 	return items[rng.Intn(len(items))]
-}
-
-// copyWeights — глубокая копия map, чтобы не мутировать кэш
-func copyWeights(src map[string]float64) map[string]float64 {
-	if src == nil {
-		return map[string]float64{}
-	}
-	dst := make(map[string]float64, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }
