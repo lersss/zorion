@@ -4,17 +4,26 @@ import { draw } from './map_render.js';
 import { filterState } from '../filters.js';
 
 // Размер ячейки кластеризации на экране, в пикселях.
-// Должен совпадать с CLUSTER_CELL_PX в map_render.js (для визуального соответствия).
 export const CLUSTER_CELL_PX = 40;
 
 // Задержка перед перезапросом после zoom/pan.
-// За это время пользователь может ещё подвигать карту — лишний запрос не уйдёт.
 const RELOAD_DEBOUNCE_MS = 180;
 
 let loadingData = false;
 let pendingReload = false;
 let reloadTimer = null;
 let currentWorldIdLoaded = false;
+
+// ==================== АВТОРИЗАЦИЯ ====================
+
+// handleUnauthorized — универсальный обработчик 401/403.
+// Чистит токен и редиректит на логин (защита от зацикливания).
+function handleUnauthorized() {
+    localStorage.removeItem('token');
+    if (window.location.pathname !== '/login-page') {
+        window.location.href = '/login-page';
+    }
+}
 
 // ==================== DEBOUNCE ====================
 
@@ -47,10 +56,7 @@ export async function loadClusters() {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         if (res.status === 401 || res.status === 403) {
-            localStorage.removeItem('token');
-            if (window.location.pathname !== '/login-page') {
-                window.location.href = '/login-page';
-            }
+            handleUnauthorized();
             return;
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -58,7 +64,6 @@ export async function loadClusters() {
         const clusters = await res.json();
         state.clusters = Array.isArray(clusters) ? clusters : [];
 
-        // Обновляем кэш отдельных миров — из кластеров cnt=1.
         for (const c of state.clusters) {
             if (c.cnt === 1 && c.sid) {
                 if (!state.worlds.some(w => w.id === c.sid)) {
@@ -129,17 +134,37 @@ export async function loadUserData() {
     if (currentWorldIdLoaded) return;
     try {
         const token = localStorage.getItem('token');
-        if (!token) return;
+        if (!token) {
+            handleUnauthorized();
+            return;
+        }
         const res = await fetch('/me', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
-        if (!res.ok) return;
+        if (res.status === 401 || res.status === 403) {
+            handleUnauthorized();
+            return;
+        }
+        if (!res.ok) {
+            console.warn('loadUserData: HTTP', res.status);
+            return;
+        }
         const user = await res.json();
+
         if (user.current_world_id) {
             state.currentWorldId = user.current_world_id;
-            const world = state.worlds.find(w => w.id === user.current_world_id);
+
+            let world = state.worlds.find(w => w.id === user.current_world_id);
+            if (!world) {
+                world = await fetchWorldByID(user.current_world_id, token);
+                if (world) {
+                    state.worlds.push(world);
+                }
+            }
+
             if (world) {
-                document.getElementById('currentWorldName').textContent = world.name;
+                const label = document.getElementById('currentWorldName');
+                if (label) label.textContent = world.name;
             }
         }
         currentWorldIdLoaded = true;
@@ -148,15 +173,42 @@ export async function loadUserData() {
     }
 }
 
+// fetchWorldByID — загружает один мир по ID через /worlds/{id}.
+async function fetchWorldByID(id, token) {
+    try {
+        const res = await fetch('/worlds/' + encodeURIComponent(id), {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (res.status === 401 || res.status === 403) {
+            handleUnauthorized();
+            return null;
+        }
+        if (!res.ok) {
+            console.warn('fetchWorldByID HTTP', res.status, 'for', id);
+            return null;
+        }
+        const payload = await res.json();
+        const w = payload.world || payload;
+        if (!w || !w.id) return null;
+        return {
+            id: w.id,
+            name: w.name || '—',
+            spectral_class: w.spectral_class || 'G',
+            coord_x: w.coord_x,
+            coord_y: w.coord_y,
+        };
+    } catch (e) {
+        console.warn('fetchWorldByID error:', e);
+        return null;
+    }
+}
+
 // ==================== ОБРАТНАЯ СОВМЕСТИМОСТЬ ====================
 
-// Раньше эту функцию звали из main.js / animation.js.
-// Теперь это алиас на loadClusters — чтобы не переписывать импорты.
 export function loadData() {
     return loadClusters();
 }
 
-// Заглушка, оставленная для совместимости со старым кодом main.js.
 export function filterWorlds(worlds) {
     return worlds || [];
 }
