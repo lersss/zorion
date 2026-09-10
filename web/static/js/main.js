@@ -5,18 +5,8 @@ import { handleCanvasClick, initFlyBtn, initPanZoom, initHover } from './map/eve
 import { animationLoop } from './map/animation.js';
 import { centerOnAgent } from './map/navigation.js';
 import { applyFiltersFromUI, resetFilters, filterState } from './filters.js';
-import { openSystemModal } from './modal/index.js';
-import { worldToCanvas, isFiniteNumber } from './map/utils.js';
+import { loadClusters, loadUserData } from './map/data.js';
 import { draw } from './map/map_render.js';
-
-// --- Обработка 401/403: выход на логин ---
-function handleUnauthorized() {
-    localStorage.removeItem('token');
-    // Защита от зацикливания: если мы уже на логине — не редиректим
-    if (window.location.pathname !== '/login-page') {
-        window.location.href = '/login-page';
-    }
-}
 
 // --- Восстановление вьюпорта из sessionStorage ---
 function restoreViewport() {
@@ -27,134 +17,38 @@ function restoreViewport() {
             state.offsetX = vp.offsetX || 0;
             state.offsetY = vp.offsetY || 0;
             state.scale = vp.scale || 1;
+            if (elements.zoomInfo) {
+                elements.zoomInfo.textContent = Math.round(state.scale * 100) + '%';
+            }
             return true;
         }
     } catch (e) { /* ignore */ }
     return false;
 }
 
-// --- Загрузка миров с фильтрацией ---
-async function loadWorldsWithFilters(filters) {
-    const token = localStorage.getItem('token');
-    if (!token) {
-        handleUnauthorized();
-        throw new Error('Unauthorized');
-    }
+// --- Инициализация карты ---
+async function initMap() {
+    resizeCanvas();
 
-    let url = '/api/worlds/filter';
-    if (filters) {
-        const params = new URLSearchParams();
-        if (filters.hasPlanets) params.append('has_planets', 'true');
-        if (filters.hasLife) params.append('has_life', 'true');
-        if (filters.hasHabitable) params.append('has_habitable', 'true');
-        if (filters.planetType) params.append('planet_type', filters.planetType);
-        if (filters.resourceCategory) params.append('resource_category', filters.resourceCategory);
-        const query = params.toString();
-        if (query) url += '?' + query;
-    }
+    // 1. Пользователь (current_world_id)
+    await loadUserData();
 
-    const res = await fetch(url, {
-        headers: { 'Authorization': 'Bearer ' + token }
-    });
-
-    // Сессия истекла — на логин
-    if (res.status === 401 || res.status === 403) {
-        handleUnauthorized();
-        throw new Error('Unauthorized');
-    }
-    if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    }
-    return res.json();
-}
-
-// --- Загрузка всех данных (миры + пользователь) ---
-async function loadAllData(filters, keepViewport = false) {
-    const token = localStorage.getItem('token');
-    if (!token) {
-        console.warn('No token, redirect to login');
-        handleUnauthorized();
-        return;
-    }
-
-    elements.loading.style.display = 'block';
-    elements.statusBar.textContent = '⏳ Загрузка данных...';
-
-    const savedOffsetX = keepViewport ? state.offsetX : null;
-    const savedOffsetY = keepViewport ? state.offsetY : null;
-    const savedScale = keepViewport ? state.scale : null;
-
-    try {
-        const worlds = await loadWorldsWithFilters(filters || null);
-        state.worlds = worlds;
-        state.filteredWorlds = null;
-
-        await loadUserData();
-
-        if (savedOffsetX !== null && savedOffsetY !== null && savedScale !== null) {
-            state.offsetX = savedOffsetX;
-            state.offsetY = savedOffsetY;
-            state.scale = savedScale;
-        } else {
-            if (!restoreViewport()) {
-                if (state.currentWorldId) {
-                    centerOnAgent();
-                } else {
-                    if (state.worlds.length > 0) {
-                        const first = state.worlds[0];
-                        const pos = worldToCanvas(first);
-                        if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
-                            state.offsetX = state.canvasWidth / 2 - pos.x;
-                            state.offsetY = state.canvasHeight / 2 - pos.y;
-                        }
-                    }
-                }
-            }
+    // 2. Восстановление вьюпорта
+    const restored = restoreViewport();
+    if (!restored) {
+        // Первый заход — центрируемся на игроке, если знаем мир
+        if (state.currentWorldId) {
+            centerOnAgent();
         }
-
-        resizeCanvas();
-        elements.loading.style.display = 'none';
-        elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
-    } catch (err) {
-        console.error('Load data error:', err);
-
-        // Если это 401/403 — уже сделали редирект, ничего не показываем
-        if (err.message === 'Unauthorized') {
-            return;
-        }
-
-        elements.loading.textContent = '❌ Ошибка загрузки данных';
-        elements.statusBar.textContent = '❌ Ошибка: ' + err.message;
-        throw err;
     }
-}
 
-async function loadUserData() {
-    try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
+    // 3. Первая загрузка кластеров
+    if (elements.loading) elements.loading.style.display = 'block';
+    if (elements.statusBar) elements.statusBar.textContent = '⏳ Загрузка карты...';
 
-        const res = await fetch('/me', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
+    await loadClusters();
 
-        if (res.status === 401 || res.status === 403) {
-            handleUnauthorized();
-            return;
-        }
-        if (!res.ok) return;
-
-        const user = await res.json();
-        if (user.current_world_id) {
-            state.currentWorldId = user.current_world_id;
-            const world = state.worlds.find(w => w.id === user.current_world_id);
-            if (world) {
-                document.getElementById('currentWorldName').textContent = world.name;
-            }
-        }
-    } catch (e) {
-        console.warn('Failed to load user data:', e);
-    }
+    if (elements.loading) elements.loading.style.display = 'none';
 }
 
 function init() {
@@ -170,12 +64,6 @@ function init() {
 
     async function applyFilters() {
         applyFiltersFromUI();
-        const filters = {};
-        if (filterState.hasPlanets) filters.hasPlanets = true;
-        if (filterState.hasLife) filters.hasLife = true;
-        if (filterState.hasHabitable) filters.hasHabitable = true;
-        if (filterState.planetType) filters.planetType = filterState.planetType;
-        if (filterState.resourceCategory) filters.resourceCategory = filterState.resourceCategory;
 
         const spinner = document.getElementById('filter-spinner');
         const countEl = document.getElementById('filter-count');
@@ -183,9 +71,15 @@ function init() {
         if (countEl) countEl.textContent = '...';
 
         try {
-            await loadAllData(filters, true);
+            await loadClusters();
             if (countEl) {
-                const activeCount = Object.keys(filters).length;
+                const activeCount = [
+                    filterState.hasPlanets,
+                    filterState.hasLife,
+                    filterState.hasHabitable,
+                    filterState.planetType,
+                    filterState.resourceCategory,
+                ].filter(Boolean).length;
                 countEl.textContent = activeCount > 0 ? `(${activeCount})` : '';
             }
         } catch (e) {
@@ -219,7 +113,7 @@ function init() {
             if (countEl) countEl.textContent = '...';
 
             try {
-                await loadAllData(null, true);
+                await loadClusters();
                 if (countEl) countEl.textContent = '';
             } catch (e) {
                 console.error('Reset filter error:', e);
@@ -230,10 +124,12 @@ function init() {
         });
     }
 
-    loadAllData(null, false).then(() => {
+    // --- Первая загрузка + запуск цикла анимации ---
+    initMap().then(() => {
         animationLoop();
-    }).catch(() => {
-        // Ошибка уже обработана в loadAllData
+    }).catch(err => {
+        console.error('initMap error:', err);
+        if (elements.statusBar) elements.statusBar.textContent = '❌ Ошибка загрузки';
     });
 }
 

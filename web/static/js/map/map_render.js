@@ -5,18 +5,8 @@ import { CONFIG } from '../config.js';
 
 const { map: mapCfg } = CONFIG;
 
-// ==================== КОНСТАНТЫ ====================
-
-// Размер ячейки кластеризации в пикселях экрана.
-// Чем больше — тем крупнее кластеры. 40 — компромисс: не слипается, но заметно.
-const CLUSTER_CELL = 40;
-
-// Если миров в ячейке <= этому числу, показываем их как отдельные точки
-// с индивидуальной подписью (только при достаточном зуме).
-const CLUSTER_SINGLE_LIMIT = 1;
-
-// Размеры звёзд по спектральному классу. Вынесено из цикла — было 100000× пересоздание.
-const SPECTRAL_SIZE = {
+// Размеры звёзд по спектральному классу — вынесено из циклов.
+export const SPECTRAL_SIZE = {
     'O': 21, 'B': 19.5, 'A': 18,
     'F': 16.5, 'G': 15,
     'K': 12, 'M': 9,
@@ -35,50 +25,64 @@ export function resizeCanvas() {
     draw();
 }
 
+// ==================== РАЗМЕР КЛАСТЕРА НА ЭКРАНЕ ====================
+
+// Используется и в рендере, и в hover-детекции (из events.js).
+export function clusterScreenRadius(c) {
+    if (c.cnt === 1) {
+        const baseSize = SPECTRAL_SIZE[c.sspec] || 12;
+        const hash = hashString(c.sid || '');
+        const variation = 0.9 + (hash % 20) / 100;
+        return Math.max(mapCfg.minRadius, baseSize * variation * state.scale);
+    }
+    return Math.max(10, Math.min(30, 8 + Math.log2(c.cnt) * 3));
+}
+
 // ==================== DRAW ====================
 
 export function draw() {
     const {
         canvasWidth, canvasHeight, currentWorldId, hoveredWorldId,
         isFlying, flyStartTime, flyDuration, flyFrom, flyTo,
-        scale, offsetX, offsetY, filteredWorlds, worlds
+        scale, offsetX, offsetY, clusters
     } = state;
     const { ctx, statusBar } = elements;
-
-    const worldsToDraw = filteredWorlds || worlds || [];
 
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
     drawGrid(ctx, canvasWidth, canvasHeight, scale, offsetX, offsetY);
 
-    // --- ШАГ 1: разбить миры на ячейки ---
-    const clusters = buildClusters(worldsToDraw, canvasWidth, canvasHeight, scale, offsetX, offsetY);
-
-    // --- ШАГ 2: нарисовать точки и кластеры ---
+    // --- Отрисовка кластеров ---
+    const visibleClusters = clusters || [];
     const singles = [];
-    for (const cluster of clusters.values()) {
-        if (cluster.count === CLUSTER_SINGLE_LIMIT) {
-            const w = cluster.worlds[0];
-            const pos = cluster;
-            drawSingleStar(ctx, w, pos.x, pos.y, scale, currentWorldId, hoveredWorldId);
-            singles.push({ world: w, x: pos.x, y: pos.y });
+
+    for (const c of visibleClusters) {
+        const px = c.x * scale + offsetX;
+        const py = c.y * scale + offsetY;
+
+        // Пропускаем то, что вне экрана
+        if (!isFiniteNumber(px) || !isFiniteNumber(py)) continue;
+        if (px < -50 || py < -50 || px > canvasWidth + 50 || py > canvasHeight + 50) continue;
+
+        if (c.cnt === 1) {
+            drawSingleStar(ctx, c, px, py, scale, currentWorldId, hoveredWorldId);
+            singles.push({ c, x: px, y: py });
         } else {
-            drawCluster(ctx, cluster, scale);
+            drawCluster(ctx, c, px, py);
         }
     }
 
-    // --- ШАГ 3: подписи для одиночных миров при достаточном зуме ---
+    // --- Подписи одиночных миров при достаточном зуме ---
     if (scale > mapCfg.nameDisplayThreshold) {
         drawNames(ctx, singles, scale);
     }
 
-    // --- ШАГ 4: анимация полёта ---
+    // --- Анимация полёта ---
     if (isFlying && flyFrom && flyTo) {
         drawFlight(ctx, scale, flyFrom, flyTo, flyStartTime, flyDuration);
     }
 
-    // --- Статус-бар ---
-    updateStatusBar(statusBar, worlds, worldsToDraw, clusters, isFlying, flyStartTime, flyDuration);
+    updateStatusBar(statusBar, visibleClusters, isFlying, flyStartTime, flyDuration);
 }
 
 // ==================== СЕТКА ====================
@@ -107,59 +111,11 @@ function drawGrid(ctx, canvasWidth, canvasHeight, scale, offsetX, offsetY) {
     }
 }
 
-// ==================== КЛАСТЕРИЗАЦИЯ ====================
+// ==================== ОТРИСОВКА ЭЛЕМЕНТОВ ====================
 
-// buildClusters — один проход по мирам, раскладывает их по ячейкам сетки.
-// Возвращает Map<key, {x, y, count, worlds, avgR, avgG, avgB}>.
-function buildClusters(worlds, canvasWidth, canvasHeight, scale, offsetX, offsetY) {
-    const clusters = new Map();
-
-    for (let i = 0; i < worlds.length; i++) {
-        const w = worlds[i];
-        const px = w.coord_x * scale + offsetX;
-        const py = w.coord_y * scale + offsetY;
-
-        // За пределами экрана (с запасом) — не считаем.
-        if (px < -CLUSTER_CELL || py < -CLUSTER_CELL ||
-            px > canvasWidth + CLUSTER_CELL || py > canvasHeight + CLUSTER_CELL) {
-            continue;
-        }
-
-        const cellX = Math.floor(px / CLUSTER_CELL);
-        const cellY = Math.floor(py / CLUSTER_CELL);
-        const key = cellX * 100000 + cellY;
-
-        let cluster = clusters.get(key);
-        if (!cluster) {
-            cluster = {
-                x: 0, y: 0, count: 0, worlds: [],
-            };
-            clusters.set(key, cluster);
-        }
-
-        cluster.count++;
-        cluster.worlds.push(w);
-        cluster.x += px;
-        cluster.y += py;
-    }
-
-    // Усредняем координаты кластера.
-    for (const cluster of clusters.values()) {
-        cluster.x /= cluster.count;
-        cluster.y /= cluster.count;
-    }
-
-    return clusters;
-}
-
-// ==================== ОТРИСОВКА ====================
-
-function drawSingleStar(ctx, w, x, y, scale, currentWorldId, hoveredWorldId) {
-    const baseSize = SPECTRAL_SIZE[w.spectral_class] || 12;
-    const hash = hashString(w.id);
-    const variation = 0.9 + (hash % 20) / 100;
-    const radius = Math.max(mapCfg.minRadius, baseSize * variation * scale);
-    const color = getStarColor(w.spectral_class || 'G');
+function drawSingleStar(ctx, c, x, y, scale, currentWorldId, hoveredWorldId) {
+    const radius = clusterScreenRadius(c);
+    const color = getStarColor(c.sspec || 'G');
 
     ctx.globalAlpha = 1;
     ctx.beginPath();
@@ -170,8 +126,7 @@ function drawSingleStar(ctx, w, x, y, scale, currentWorldId, hoveredWorldId) {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Подсветка текущего мира.
-    if (w.id === currentWorldId) {
+    if (c.sid === currentWorldId) {
         try {
             const glow = ctx.createRadialGradient(x, y, Math.max(0, radius - 2), x, y, radius + 10);
             glow.addColorStop(0, 'rgba(251,191,36,0.3)');
@@ -189,8 +144,7 @@ function drawSingleStar(ctx, w, x, y, scale, currentWorldId, hoveredWorldId) {
         }
     }
 
-    // Подсветка hover.
-    if (w.id === hoveredWorldId) {
+    if (c.sid === hoveredWorldId) {
         ctx.save();
         ctx.shadowColor = 'rgba(255,255,255,0.3)';
         ctx.shadowBlur = 12;
@@ -205,13 +159,11 @@ function drawSingleStar(ctx, w, x, y, scale, currentWorldId, hoveredWorldId) {
     }
 }
 
-// drawCluster — рисует кластер: круг с числом.
-// Размер зависит от логарифма count — большие кластеры больше, но не гигантские.
-function drawCluster(ctx, cluster, scale) {
-    const count = cluster.count;
-    const radius = Math.max(10, Math.min(30, 8 + Math.log2(count) * 3));
+function drawCluster(ctx, c, x, y) {
+    const radius = clusterScreenRadius(c);
+    const count = c.cnt;
 
-    // Цвет — от синего (мало) к фиолетовому (много).
+    // Цвет: от голубого (мало) к фиолетовому (много)
     const t = Math.min(1, Math.log10(count) / 3);
     const r = Math.round(74 + t * 100);
     const g = Math.round(158 - t * 80);
@@ -220,28 +172,26 @@ function drawCluster(ctx, cluster, scale) {
     const strokeColor = `rgba(${r},${g},${b},1)`;
 
     ctx.beginPath();
-    ctx.arc(cluster.x, cluster.y, radius, 0, Math.PI * 2);
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fillStyle = fillColor;
     ctx.fill();
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Внутренний светлый кант.
     ctx.beginPath();
-    ctx.arc(cluster.x, cluster.y, radius - 3, 0, Math.PI * 2);
+    ctx.arc(x, y, Math.max(1, radius - 3), 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Число внутри.
     const label = formatCount(count);
     const fontSize = Math.max(10, Math.min(14, radius));
     ctx.fillStyle = '#0f172a';
     ctx.font = `bold ${fontSize}px system-ui`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, cluster.x, cluster.y);
+    ctx.fillText(label, x, y);
     ctx.textBaseline = 'alphabetic';
 }
 
@@ -251,11 +201,8 @@ function drawNames(ctx, singles, scale) {
     ctx.textAlign = 'center';
 
     for (const s of singles) {
-        const baseSize = SPECTRAL_SIZE[s.world.spectral_class] || 12;
-        const hash = hashString(s.world.id);
-        const variation = 0.9 + (hash % 20) / 100;
-        const radius = Math.max(mapCfg.minRadius, baseSize * variation * scale);
-        ctx.fillText(s.world.name, s.x, s.y + radius + mapCfg.nameFontSize * scale);
+        const radius = clusterScreenRadius(s.c);
+        ctx.fillText(s.c.sname || '—', s.x, s.y + radius + mapCfg.nameFontSize * scale);
     }
 }
 
@@ -301,7 +248,7 @@ function drawFlight(ctx, scale, flyFrom, flyTo, flyStartTime, flyDuration) {
 
 // ==================== СТАТУС-БАР ====================
 
-function updateStatusBar(statusBar, worlds, worldsToDraw, clusters, isFlying, flyStartTime, flyDuration) {
+function updateStatusBar(statusBar, clusters, isFlying, flyStartTime, flyDuration) {
     if (isFlying) {
         const elapsed = (Date.now() - flyStartTime) / 1000;
         const remaining = Math.max(0, flyDuration - elapsed);
@@ -309,25 +256,19 @@ function updateStatusBar(statusBar, worlds, worldsToDraw, clusters, isFlying, fl
         return;
     }
 
-    const total = worlds ? worlds.length : 0;
-    const visible = worldsToDraw.length;
-    const shownOnScreen = Array.from(clusters.values()).reduce((sum, c) => sum + c.count, 0);
-    const clustersCount = clusters.size;
-
-    if (total === 0) {
-        statusBar.textContent = 'Нет миров';
-        return;
+    const totalClusters = clusters.length;
+    let totalWorlds = 0;
+    let singles = 0;
+    for (const c of clusters) {
+        totalWorlds += c.cnt;
+        if (c.cnt === 1) singles++;
     }
-    if (visible === total && shownOnScreen === total) {
-        statusBar.textContent = `${total} миров на карте (${clustersCount} объектов)`;
-    } else {
-        statusBar.textContent = `${shownOnScreen} из ${total} миров (${clustersCount} объектов)`;
-    }
+    statusBar.textContent = `${totalWorlds} миров в кадре (${singles} одиночных, ${totalClusters - singles} кластеров)`;
 }
 
 // ==================== УТИЛИТЫ ====================
 
-function hashString(s) {
+export function hashString(s) {
     let hash = 0;
     for (let i = 0; i < s.length; i++) {
         hash = (hash * 31 + s.charCodeAt(i)) & 0xFFFFFFFF;
@@ -335,7 +276,6 @@ function hashString(s) {
     return hash;
 }
 
-// formatCount — 1250 → «1.3k», 12500 → «13k», 125000 → «125k».
 function formatCount(n) {
     if (n < 1000) return String(n);
     if (n < 10000) return (n / 1000).toFixed(1) + 'k';

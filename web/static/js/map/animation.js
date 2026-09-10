@@ -1,6 +1,8 @@
+// web/static/js/map/animation.js
 import { state, elements } from './config.js';
 import { draw } from './map_render.js';
-import { loadData } from './data.js';
+import { loadClusters, loadUserData } from './data.js';
+import { centerOnAgent } from './navigation.js';
 
 export function animationLoop() {
     if (state.isFlying) {
@@ -8,7 +10,13 @@ export function animationLoop() {
         if (elapsed >= state.flyDuration) {
             state.isFlying = false;
             elements.statusBar.textContent = '✅ Прибытие!';
-            loadData();
+            // Перезагружаем данные (могли прилететь в другую область)
+            loadUserData().then(() => {
+                if (state.currentWorldId) {
+                    centerOnAgent();
+                }
+                return loadClusters();
+            }).catch(err => console.error('Arrival reload error:', err));
         } else {
             draw();
         }

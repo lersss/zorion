@@ -1,71 +1,132 @@
 // web/static/js/map/data.js
 import { state, elements } from './config.js';
-import { isFiniteNumber, worldToCanvas, getStarColor } from './utils.js';
-import { CONFIG } from '../config.js';
-import { centerOnAgent } from './navigation.js';
+import { draw } from './map_render.js';
 import { filterState } from '../filters.js';
-import { resizeCanvas } from './map_render.js'; // <-- обновлён импорт
 
-const { map: mapCfg } = CONFIG;
+// Размер ячейки кластеризации на экране, в пикселях.
+// Должен совпадать с CLUSTER_CELL_PX в map_render.js (для визуального соответствия).
+export const CLUSTER_CELL_PX = 40;
+
+// Задержка перед перезапросом после zoom/pan.
+// За это время пользователь может ещё подвигать карту — лишний запрос не уйдёт.
+const RELOAD_DEBOUNCE_MS = 180;
 
 let loadingData = false;
-let dataLoaded = false;
+let pendingReload = false;
+let reloadTimer = null;
+let currentWorldIdLoaded = false;
 
-export async function loadData() {
-    if (loadingData) return;
+// ==================== DEBOUNCE ====================
+
+export function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        loadClusters().catch(err => console.error('scheduleReload:', err));
+    }, RELOAD_DEBOUNCE_MS);
+}
+
+// ==================== ЗАГРУЗКА КЛАСТЕРОВ ====================
+
+export async function loadClusters() {
+    if (loadingData) {
+        pendingReload = true;
+        return;
+    }
     loadingData = true;
-    if (elements.loading) elements.loading.style.display = 'block';
-    if (elements.statusBar) elements.statusBar.textContent = '⏳ Загрузка данных...';
 
     try {
         const token = localStorage.getItem('token');
-        if (!token) {
-            throw new Error('No token');
-        }
-        const res = await fetch('/worlds', {
+        if (!token) throw new Error('No token');
+
+        const bounds = getViewportBounds();
+        const cell = getCellSize();
+        const url = buildUrl(bounds, cell);
+
+        const res = await fetch(url, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
-        if (!res.ok) {
-            throw new Error('Failed to fetch worlds');
+        if (res.status === 401 || res.status === 403) {
+            localStorage.removeItem('token');
+            if (window.location.pathname !== '/login-page') {
+                window.location.href = '/login-page';
+            }
+            return;
         }
-        const worlds = await res.json();
-        state.worlds = worlds;
-        dataLoaded = true;
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
-        await loadUserData();
+        const clusters = await res.json();
+        state.clusters = Array.isArray(clusters) ? clusters : [];
 
-        state.filteredWorlds = filterWorlds(state.worlds);
-
-        if (state.currentWorldId) {
-            centerOnAgent();
-        } else {
-            if (state.worlds.length > 0) {
-                const first = state.worlds[0];
-                const pos = worldToCanvas(first);
-                if (isFiniteNumber(pos.x) && isFiniteNumber(pos.y)) {
-                    state.offsetX = state.canvasWidth / 2 - pos.x;
-                    state.offsetY = state.canvasHeight / 2 - pos.y;
+        // Обновляем кэш отдельных миров — из кластеров cnt=1.
+        for (const c of state.clusters) {
+            if (c.cnt === 1 && c.sid) {
+                if (!state.worlds.some(w => w.id === c.sid)) {
+                    state.worlds.push({
+                        id: c.sid,
+                        name: c.sname || '—',
+                        spectral_class: c.sspec || 'G',
+                        coord_x: c.x,
+                        coord_y: c.y,
+                    });
                 }
             }
         }
 
-        resizeCanvas();
         if (elements.loading) elements.loading.style.display = 'none';
-        if (elements.statusBar) {
-            elements.statusBar.textContent = `${state.worlds.length} миров загружено`;
-        }
-        return state.worlds;
     } catch (err) {
-        console.error('Load data error:', err);
-        if (elements.loading) elements.loading.textContent = '❌ Ошибка загрузки данных';
-        if (elements.statusBar) elements.statusBar.textContent = '❌ Ошибка';
-        throw err;
+        console.error('loadClusters error:', err);
+        if (elements.statusBar) elements.statusBar.textContent = '❌ Ошибка: ' + err.message;
     } finally {
         loadingData = false;
+        if (pendingReload) {
+            pendingReload = false;
+            scheduleReload();
+        }
     }
+
+    draw();
 }
 
-async function loadUserData() {
+// ==================== ГРАНИЦЫ VIEWPORT ====================
+
+function getViewportBounds() {
+    const invScale = 1 / state.scale;
+    return {
+        xMin: -state.offsetX * invScale,
+        xMax: (state.canvasWidth - state.offsetX) * invScale,
+        yMin: -state.offsetY * invScale,
+        yMax: (state.canvasHeight - state.offsetY) * invScale,
+    };
+}
+
+function getCellSize() {
+    return CLUSTER_CELL_PX / state.scale;
+}
+
+// ==================== URL ====================
+
+function buildUrl(bounds, cell) {
+    const params = new URLSearchParams();
+    params.set('x_min', bounds.xMin.toFixed(3));
+    params.set('x_max', bounds.xMax.toFixed(3));
+    params.set('y_min', bounds.yMin.toFixed(3));
+    params.set('y_max', bounds.yMax.toFixed(3));
+    params.set('cell', cell.toFixed(3));
+
+    if (filterState.hasPlanets) params.set('has_planets', 'true');
+    if (filterState.hasLife) params.set('has_life', 'true');
+    if (filterState.hasHabitable) params.set('has_habitable', 'true');
+    if (filterState.planetType) params.set('planet_type', filterState.planetType);
+    if (filterState.resourceCategory) params.set('resource_category', filterState.resourceCategory);
+
+    return '/api/worlds/filter?' + params.toString();
+}
+
+// ==================== ПОЛЬЗОВАТЕЛЬ ====================
+
+export async function loadUserData() {
+    if (currentWorldIdLoaded) return;
     try {
         const token = localStorage.getItem('token');
         if (!token) return;
@@ -81,54 +142,21 @@ async function loadUserData() {
                 document.getElementById('currentWorldName').textContent = world.name;
             }
         }
+        currentWorldIdLoaded = true;
     } catch (e) {
-        console.warn('Failed to load user data:', e);
+        console.warn('loadUserData error:', e);
     }
 }
 
+// ==================== ОБРАТНАЯ СОВМЕСТИМОСТЬ ====================
+
+// Раньше эту функцию звали из main.js / animation.js.
+// Теперь это алиас на loadClusters — чтобы не переписывать импорты.
+export function loadData() {
+    return loadClusters();
+}
+
+// Заглушка, оставленная для совместимости со старым кодом main.js.
 export function filterWorlds(worlds) {
-    if (!worlds || worlds.length === 0) return [];
-
-    const hasActiveFilters = filterState.hasPlanets || filterState.hasLife || filterState.hasHabitable ||
-                             filterState.planetType || filterState.resourceCategory;
-    if (!hasActiveFilters) return worlds;
-
-    return worlds.filter(world => {
-        if (!world.planets || world.planets.length === 0) {
-            if (filterState.hasPlanets) return false;
-            if (filterState.hasLife) return false;
-            if (filterState.hasHabitable) return false;
-            if (filterState.planetType) return false;
-            if (filterState.resourceCategory) return false;
-            return true;
-        }
-
-        if (filterState.hasPlanets && world.planets.length === 0) return false;
-
-        if (filterState.hasLife) {
-            const hasLife = world.planets.some(p => p.life === true);
-            if (!hasLife) return false;
-        }
-
-        if (filterState.hasHabitable) {
-            const hasHabitable = world.planets.some(p => p.habitable === true);
-            if (!hasHabitable) return false;
-        }
-
-        if (filterState.planetType) {
-            const hasType = world.planets.some(p => (p.type || '').toLowerCase() === filterState.planetType.toLowerCase());
-            if (!hasType) return false;
-        }
-
-        if (filterState.resourceCategory) {
-            const hasResource = world.planets.some(p => {
-                if (!p.resources) return false;
-                const val = p.resources[filterState.resourceCategory];
-                return typeof val === 'number' && val > 0.3;
-            });
-            if (!hasResource) return false;
-        }
-
-        return true;
-    });
+    return worlds || [];
 }
