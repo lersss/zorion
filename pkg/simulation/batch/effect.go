@@ -1,7 +1,6 @@
 package batch
 
 import (
-	"context"
 	"time"
 	"github.com/google/uuid"
 )
