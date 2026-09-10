@@ -1,3 +1,4 @@
+// internal/generator/status.go
 package generator
 
 import (
@@ -17,7 +18,7 @@ type JobStatus struct {
 	mu         sync.RWMutex
 	Total      int
 	Processed  int
-	Status     string // "idle", "running", "done", "error", "canceled"
+	Status     string
 	Error      string
 	CancelFunc context.CancelFunc
 }
@@ -36,15 +37,25 @@ func NewStatusManager() *StatusManager {
 func (sm *StatusManager) Get(job JobType) *JobStatus {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	if s, ok := sm.jobs[job]; ok {
-		return s
-	}
-	return nil
+	return sm.jobs[job]
 }
 
-func (sm *StatusManager) Start(job JobType, total int, cancel context.CancelFunc) {
+// TryStart — атомарно: если задача уже running, вернёт false.
+// Если свободна — создаёт JobStatus и возвращает true.
+// Это убирает race между проверкой статуса и стартом.
+func (sm *StatusManager) TryStart(job JobType, total int, cancel context.CancelFunc) bool {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+
+	if existing, ok := sm.jobs[job]; ok {
+		existing.mu.RLock()
+		isRunning := existing.Status == "running"
+		existing.mu.RUnlock()
+		if isRunning {
+			return false
+		}
+	}
+
 	sm.jobs[job] = &JobStatus{
 		Total:      total,
 		Processed:  0,
@@ -52,13 +63,36 @@ func (sm *StatusManager) Start(job JobType, total int, cancel context.CancelFunc
 		Error:      "",
 		CancelFunc: cancel,
 	}
+	return true
+}
+
+// Start — legacy-метод, оставлен на случай ручного использования.
+// В новых вызовах используй TryStart.
+func (sm *StatusManager) Start(job JobType, total int, cancel context.CancelFunc) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.jobs[job] = &JobStatus{
+		Total:      total,
+		Processed:  0,
+		Status:     "running",
+		CancelFunc: cancel,
+	}
+}
+
+// IsRunning — атомарная проверка «идёт ли задача».
+func (sm *StatusManager) IsRunning(job JobType) bool {
+	s := sm.Get(job)
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Status == "running"
 }
 
 func (sm *StatusManager) Progress(job JobType, processed int) {
-	sm.mu.RLock()
-	s, ok := sm.jobs[job]
-	sm.mu.RUnlock()
-	if !ok {
+	s := sm.Get(job)
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
@@ -67,10 +101,8 @@ func (sm *StatusManager) Progress(job JobType, processed int) {
 }
 
 func (sm *StatusManager) Done(job JobType) {
-	sm.mu.RLock()
-	s, ok := sm.jobs[job]
-	sm.mu.RUnlock()
-	if !ok {
+	s := sm.Get(job)
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
@@ -80,10 +112,8 @@ func (sm *StatusManager) Done(job JobType) {
 }
 
 func (sm *StatusManager) Fail(job JobType, err string) {
-	sm.mu.RLock()
-	s, ok := sm.jobs[job]
-	sm.mu.RUnlock()
-	if !ok {
+	s := sm.Get(job)
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
@@ -94,10 +124,8 @@ func (sm *StatusManager) Fail(job JobType, err string) {
 }
 
 func (sm *StatusManager) Cancel(job JobType) {
-	sm.mu.RLock()
-	s, ok := sm.jobs[job]
-	sm.mu.RUnlock()
-	if !ok {
+	s := sm.Get(job)
+	if s == nil {
 		return
 	}
 	s.mu.Lock()

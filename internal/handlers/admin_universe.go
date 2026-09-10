@@ -1,8 +1,10 @@
+// internal/handlers/admin_universe.go
 package handlers
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -15,12 +17,24 @@ import (
 
 var statusManager = generator.NewStatusManager()
 
-func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request) {
-	if s := statusManager.Get(generator.JobGenerateUniverse); s != nil && s.Status == "running" {
-		http.Error(w, "Generation already running", http.StatusConflict)
-		return
+// recoverErr — безопасно превращает результат recover() в строку.
+// Раньше было r.(string) — это паниковало на runtime.Error.
+func recoverErr(r interface{}) string {
+	if r == nil {
+		return ""
 	}
+	if s, ok := r.(string); ok {
+		return s
+	}
+	if err, ok := r.(error); ok {
+		return err.Error()
+	}
+	return fmt.Sprintf("%v", r)
+}
 
+// ==================== GENERATE UNIVERSE ====================
+
+func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		WorldCount     int     `json:"world_count"`
 		ClusterCount   int     `json:"cluster_count"`
@@ -63,13 +77,19 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 		req.MapSize, req.MinDist, req.ClusterRadius, req.ClusterSpacing, req.OutlierPercent)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	statusManager.Start(generator.JobGenerateUniverse, req.WorldCount, cancel)
+
+	// АТОМАРНО: только один запуск, без race
+	if !statusManager.TryStart(generator.JobGenerateUniverse, req.WorldCount, cancel) {
+		cancel()
+		http.Error(w, "Generation already running", http.StatusConflict)
+		return
+	}
 
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("❌ GenerateUniverse panic: %v", r)
-				statusManager.Fail(generator.JobGenerateUniverse, "panic: "+r.(string))
+			if rec := recover(); rec != nil {
+				log.Printf("❌ GenerateUniverse panic: %v", rec)
+				statusManager.Fail(generator.JobGenerateUniverse, "panic: "+recoverErr(rec))
 			}
 		}()
 		log.Printf("🌌 GenerateUniverse: start with %d worlds, %d clusters", req.WorldCount, req.ClusterCount)
@@ -83,16 +103,12 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 			ClusterRadius:  req.ClusterRadius,
 			ClusterSpacing: req.ClusterSpacing,
 			OutlierPercent: float64(req.OutlierPercent) / 100.0,
-			WorldSpread:    20.0, // Можно сделать параметром, но пока фиксированно
+			WorldSpread:    20.0,
 		}
 		gen := galaxy.NewGenerator(&cfg)
-
-		// Генерация миров
 		worlds := gen.GenerateGalaxy()
 		log.Printf("✅ Generated %d worlds", len(worlds))
 
-		// Сохраняем миры в БД (вставка по одному или батчем)
-		// Для простоты используем h.db, но можно и h.worldRepo, если есть метод Create
 		tx, err := h.db.Begin()
 		if err != nil {
 			log.Printf("❌ GenerateUniverse: failed to start transaction: %v", err)
@@ -101,9 +117,7 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 		}
 		defer tx.Rollback()
 
-		// Очищаем старые миры (как в ClearUniverse)
-		_, err = tx.Exec("DELETE FROM worlds")
-		if err != nil {
+		if _, err := tx.Exec("DELETE FROM worlds"); err != nil {
 			log.Printf("❌ GenerateUniverse: failed to clear worlds: %v", err)
 			statusManager.Fail(generator.JobGenerateUniverse, err.Error())
 			return
@@ -128,17 +142,11 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 				return
 			default:
 			}
-			_, err := stmt.Exec(
-				world.ID,
-				world.Name,
-				world.CoordX,
-				world.CoordY,
-				world.SpectralClass,
-				world.Temperature,
-				world.CreatedAt,
-				world.UpdatedAt,
-			)
-			if err != nil {
+			if _, err := stmt.Exec(
+				world.ID, world.Name, world.CoordX, world.CoordY,
+				world.SpectralClass, world.Temperature,
+				world.CreatedAt, world.UpdatedAt,
+			); err != nil {
 				log.Printf("❌ GenerateUniverse: failed to insert world %s: %v", world.ID, err)
 				statusManager.Fail(generator.JobGenerateUniverse, err.Error())
 				return
@@ -146,13 +154,12 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 			statusManager.Progress(generator.JobGenerateUniverse, i+1)
 		}
 
-		err = tx.Commit()
-		if err != nil {
+		if err := tx.Commit(); err != nil {
 			log.Printf("❌ GenerateUniverse: failed to commit: %v", err)
 			statusManager.Fail(generator.JobGenerateUniverse, err.Error())
 			return
 		}
-		log.Printf("✅ GenerateUniverse: completed successfully, %d worlds saved", len(worlds))
+		log.Printf("✅ GenerateUniverse: completed, %d worlds saved", len(worlds))
 		statusManager.Done(generator.JobGenerateUniverse)
 	}()
 
@@ -160,62 +167,9 @@ func (h *AdminHandlers) GenerateUniverse(w http.ResponseWriter, r *http.Request)
 	w.Write([]byte(`{"status":"started"}`))
 }
 
-func (h *AdminHandlers) CancelGeneration(w http.ResponseWriter, r *http.Request) {
-	job := r.URL.Query().Get("job")
-	if job == "" {
-		http.Error(w, "job parameter required", http.StatusBadRequest)
-		return
-	}
-	jt := generator.JobType(job)
-	s := statusManager.Get(jt)
-	if s == nil || s.Status != "running" {
-		http.Error(w, "Job not running", http.StatusBadRequest)
-		return
-	}
-	statusManager.Cancel(jt)
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"canceled"}`))
-}
-
-func (h *AdminHandlers) GenerateStatus(w http.ResponseWriter, r *http.Request) {
-	job := r.URL.Query().Get("job")
-	if job == "" {
-		http.Error(w, "job parameter required", http.StatusBadRequest)
-		return
-	}
-	jt := generator.JobType(job)
-	total, processed, status, err := statusManager.GetStatus(jt)
-	resp := map[string]interface{}{
-		"total":     total,
-		"processed": processed,
-		"status":    status,
-	}
-	if err != "" {
-		resp["error"] = err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func (h *AdminHandlers) ClearUniverse(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🗑️ ClearUniverse: deleting all worlds")
-	_, err := h.db.Exec("DELETE FROM worlds")
-	if err != nil {
-		log.Printf("❌ ClearUniverse: error: %v", err)
-		http.Error(w, "Failed to clear universe: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	log.Printf("✅ ClearUniverse: cleared")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"cleared"}`))
-}
+// ==================== GENERATE PLANETS ====================
 
 func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) {
-	if s := statusManager.Get(generator.JobGeneratePlanets); s != nil && s.Status == "running" {
-		http.Error(w, "Generation already running", http.StatusConflict)
-		return
-	}
-
 	worlds, err := h.worldRepo.GetAll()
 	if err != nil {
 		log.Printf("❌ GeneratePlanets: failed to fetch worlds: %v", err)
@@ -229,13 +183,17 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	statusManager.Start(generator.JobGeneratePlanets, len(worlds), cancel)
+	if !statusManager.TryStart(generator.JobGeneratePlanets, len(worlds), cancel) {
+		cancel()
+		http.Error(w, "Generation already running", http.StatusConflict)
+		return
+	}
 
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("❌ GeneratePlanets panic: %v", r)
-				statusManager.Fail(generator.JobGeneratePlanets, "panic: "+r.(string))
+			if rec := recover(); rec != nil {
+				log.Printf("❌ GeneratePlanets panic: %v", rec)
+				statusManager.Fail(generator.JobGeneratePlanets, "panic: "+recoverErr(rec))
 			}
 		}()
 		log.Printf("🌍 GeneratePlanets: starting for %d worlds", len(worlds))
@@ -251,14 +209,14 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 			}
 			count, err := planetGen.GeneratePlanetsForWorld(world.ID, world.SpectralClass, world.Temperature)
 			if err != nil {
-				log.Printf("❌ GeneratePlanets: error generating planets for world %s: %v", world.ID, err)
+				log.Printf("❌ GeneratePlanets: error for world %s: %v", world.ID, err)
 				statusManager.Fail(generator.JobGeneratePlanets, err.Error())
 				return
 			}
 			totalPlanets += count
 			statusManager.Progress(generator.JobGeneratePlanets, i+1)
 		}
-		log.Printf("✅ GeneratePlanets: total planets generated = %d", totalPlanets)
+		log.Printf("✅ GeneratePlanets: total = %d", totalPlanets)
 		statusManager.Done(generator.JobGeneratePlanets)
 	}()
 
@@ -266,18 +224,15 @@ func (h *AdminHandlers) GeneratePlanets(w http.ResponseWriter, r *http.Request) 
 	w.Write([]byte(`{"status":"started"}`))
 }
 
-func (h *AdminHandlers) GenerateFactions(w http.ResponseWriter, r *http.Request) {
-	if s := statusManager.Get(generator.JobGenerateFactions); s != nil && s.Status == "running" {
-		http.Error(w, "Generation already running", http.StatusConflict)
-		return
-	}
+// ==================== GENERATE FACTIONS ====================
 
+func (h *AdminHandlers) GenerateFactions(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(`
 		SELECT COUNT(*) FROM planets 
 		WHERE data->>'population' IS NOT NULL AND (data->>'population')::int > 0
 	`)
 	if err != nil {
-		log.Printf("❌ GenerateFactions: failed to count habitable planets: %v", err)
+		log.Printf("❌ GenerateFactions: count error: %v", err)
 		http.Error(w, "Failed to count habitable planets", http.StatusInternalServerError)
 		return
 	}
@@ -292,22 +247,35 @@ func (h *AdminHandlers) GenerateFactions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	if !statusManager.TryStart(generator.JobGenerateFactions, total, cancel) {
+		cancel()
+		http.Error(w, "Generation already running", http.StatusConflict)
+		return
+	}
+
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("❌ GenerateFactions panic: %v", r)
-				statusManager.Fail(generator.JobGenerateFactions, "panic: "+r.(string))
+			if rec := recover(); rec != nil {
+				log.Printf("❌ GenerateFactions panic: %v", rec)
+				statusManager.Fail(generator.JobGenerateFactions, "panic: "+recoverErr(rec))
 			}
 		}()
+		select {
+		case <-ctx.Done():
+			statusManager.Cancel(generator.JobGenerateFactions)
+			return
+		default:
+		}
 		log.Printf("🏛️ GenerateFactions: start")
 		factionGen := faction.NewGenerator(h.db, 0)
-		totalFactions, err := factionGen.GenerateFactions()
+		count, err := factionGen.GenerateFactions()
 		if err != nil {
-			log.Printf("❌ GenerateFactions: error: %v", err)
+			log.Printf("❌ GenerateFactions: %v", err)
 			statusManager.Fail(generator.JobGenerateFactions, err.Error())
 			return
 		}
-		log.Printf("✅ GenerateFactions: generated %d factions", totalFactions)
+		log.Printf("✅ GenerateFactions: %d factions", count)
 		statusManager.Done(generator.JobGenerateFactions)
 	}()
 
@@ -315,15 +283,70 @@ func (h *AdminHandlers) GenerateFactions(w http.ResponseWriter, r *http.Request)
 	w.Write([]byte(`{"status":"started"}`))
 }
 
+// ==================== CANCEL / STATUS / CLEAR ====================
+
+func (h *AdminHandlers) CancelGeneration(w http.ResponseWriter, r *http.Request) {
+	job := r.URL.Query().Get("job")
+	if job == "" {
+		http.Error(w, "job parameter required", http.StatusBadRequest)
+		return
+	}
+	jt := generator.JobType(job)
+	if !statusManager.IsRunning(jt) {
+		http.Error(w, "Job not running", http.StatusBadRequest)
+		return
+	}
+	statusManager.Cancel(jt)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"canceled"}`))
+}
+
+func (h *AdminHandlers) GenerateStatus(w http.ResponseWriter, r *http.Request) {
+	job := r.URL.Query().Get("job")
+	if job == "" {
+		http.Error(w, "job parameter required", http.StatusBadRequest)
+		return
+	}
+	jt := generator.JobType(job)
+	total, processed, status, errMsg := statusManager.GetStatus(jt)
+	resp := map[string]interface{}{
+		"total":     total,
+		"processed": processed,
+		"status":    status,
+	}
+	if errMsg != "" {
+		resp["error"] = errMsg
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *AdminHandlers) ClearUniverse(w http.ResponseWriter, r *http.Request) {
+	// Не даём чистить вселенную во время активной генерации
+	if statusManager.IsRunning(generator.JobGenerateUniverse) ||
+		statusManager.IsRunning(generator.JobGeneratePlanets) {
+		http.Error(w, "Generation is running, cancel it first", http.StatusConflict)
+		return
+	}
+
+	log.Printf("🗑️ ClearUniverse: deleting all worlds")
+	if _, err := h.db.Exec("DELETE FROM worlds"); err != nil {
+		log.Printf("❌ ClearUniverse: %v", err)
+		http.Error(w, "Failed to clear universe: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("✅ ClearUniverse: cleared")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"cleared"}`))
+}
+
 func (h *AdminHandlers) GetStats(w http.ResponseWriter, r *http.Request) {
 	var worldsCount, planetsCount int
-	err := h.db.QueryRow("SELECT COUNT(*) FROM worlds").Scan(&worldsCount)
-	if err != nil {
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM worlds").Scan(&worldsCount); err != nil {
 		http.Error(w, "Failed to count worlds", http.StatusInternalServerError)
 		return
 	}
-	err = h.db.QueryRow("SELECT COUNT(*) FROM planets").Scan(&planetsCount)
-	if err != nil {
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM planets").Scan(&planetsCount); err != nil {
 		http.Error(w, "Failed to count planets", http.StatusInternalServerError)
 		return
 	}
